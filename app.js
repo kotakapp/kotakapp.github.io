@@ -126,6 +126,7 @@ async function openChat(chat) {
   current=chat; replyTo=null; $('reply-bar').hidden=true; $('room').hidden=false; $('empty').hidden=true;
   $('room-av').textContent=initials(chat.title); $('room-title').textContent=chat.title;
   $('room-sub').textContent=chat.type==='group'?'Групповой чат':'KotakApp'; $('app').dataset.view='room';
+  if(!roomPushed){ history.pushState({room:1},''); roomPushed=true; }
   await loadMessages();
 
   renderChats();
@@ -145,11 +146,14 @@ async function loadMessages() {
 }
 async function sendMessage(event) {
   event.preventDefault(); const content=$('text').value.trim(); if(!content||!current) return;
-  $('text').value='';
+  $('text').value=''; $('text').style.height='auto';
   const {data,error}=await client.from('messages').insert({conversation_id:current.id,sender_id:me.id,content,message_type:'text'}).select().single();
   if(error) { $('text').value=content; toast(error.message); return; }
   appendMessage(data); loadChats().catch(()=>{});
 }
+let roomPushed=false;
+function closeRoom(){ $('app').dataset.view='list'; current=null; replyTo=null; $('room').hidden=true; $('empty').hidden=false; renderChats(); }
+window.addEventListener('popstate',()=>{ roomPushed=false; if($('app').dataset.view==='room') closeRoom(); });
 function setTab(tab) {
   for(const name of ['chats','contacts','profile']) $('pane-'+name).hidden=name!==tab;
   document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab));
@@ -162,8 +166,10 @@ $('q').oninput=renderChats;
 $('user-search').oninput=()=>{clearTimeout(window.searchTimer);window.searchTimer=setTimeout(searchUsers,250);};
 $('contact-list').onclick=e=>{const b=e.target.closest('[data-user]');if(b)startDirectChat(b.dataset.user,b.querySelector('.name')?.textContent);};
 $('chat-list').onclick=e=>{const b=e.target.closest('[data-chat]');if(b){const c=chats.find(x=>x.id===b.dataset.chat);if(c)openChat(c);}};
-$('back').onclick=()=>{$('app').dataset.view='list';current=null;renderChats();};
+$('back').onclick=()=>{ if(roomPushed) history.back(); else closeRoom(); };
 $('composer').onsubmit=sendMessage;
+$('text').addEventListener('input',()=>{ const t=$('text'); t.style.height='auto'; t.style.height=Math.min(t.scrollHeight,140)+'px'; });
+$('text').addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey&&!matchMedia('(pointer:coarse)').matches){ e.preventDefault(); $('composer').requestSubmit(); } });
 $('logout').onclick=logout;
 $('react-row').innerHTML=EMOJI.map(x=>`<button data-e="${x}">${x}</button>`).join('');
 $('msgs').onclick=e=>{const m=e.target.closest('.m');if(!m)return;target={id:m.dataset.id,text:m.textContent};$('sheet').hidden=false;};
@@ -199,8 +205,10 @@ async function togglePush(){
 }
 $('push-btn').onclick=togglePush;
 (async()=>{
+  try {
   if(!client) { $('auth-error').textContent='Supabase не загрузился. Проверь интернет-соединение.'; return; }
   try { await loadSession(); updatePushBtn().catch(()=>{}); } catch(error) { toast(error.message||'Ошибка загрузки аккаунта'); }
   client.auth.onAuthStateChange((_event)=>{ if(_event==='SIGNED_OUT'){ $('app').hidden=true; $('auth-wrap').hidden=false; } });
   if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+  } finally { $('boot').hidden=true; }
 })();

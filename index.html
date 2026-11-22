@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+<div class="boot" id="boot"><div class="logo-box lg"></div></div>
 <div class="auth-wrap" id="auth-wrap">
   <form class="auth-card" id="auth-form">
     <div class="logo auth-logo"><span class="logo-box"></span>kotak</div>
@@ -50,7 +51,7 @@
       <header class="room-head"><button class="back" id="back" aria-label="Назад">‹</button><div class="avatar" id="room-av"></div><div><div class="title" id="room-title"></div><div class="muted small" id="room-sub">KotakApp</div></div></header>
       <div class="msgs" id="msgs"></div>
       <div class="reply-bar" id="reply-bar" hidden><span id="reply-text"></span><button id="reply-x" aria-label="Отменить ответ">×</button></div>
-      <form class="composer" id="composer"><input id="text" placeholder="Сообщение" autocomplete="off" maxlength="5000"><button class="send" aria-label="Отправить">↑</button></form>
+      <form class="composer" id="composer" autocomplete="off"><textarea id="text" name="kotak-msg" rows="1" placeholder="Сообщение" autocomplete="off" maxlength="5000" enterkeyhint="send" data-lpignore="true" data-form-type="other"></textarea><button class="send" aria-label="Отправить">↑</button></form>
     </section>
   </main>
 </div>

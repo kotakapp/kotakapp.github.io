@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Unbounded:wght@500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=6">
+<link rel="stylesheet" href="styles.css?v=7">
 </head>
 <body>
 <div class="boot" id="boot"><div class="logo-box lg"></div></div>
@@ -57,8 +57,28 @@
 </div>
 <div class="toast" id="toast" role="status"></div>
 <div class="sheet" id="sheet" hidden><div class="sheet-body"><div class="react-row" id="react-row"></div><button id="act-reply">Ответить</button><button id="act-close" class="muted">Закрыть</button></div></div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="config.js?v=6"></script>
-<script src="app.js?v=6"></script>
+<script>
+(function(){
+  var V='7', st={ok:{},err:[]};
+  addEventListener('error',function(e){ st.err.push(e.message||'error'); });
+  addEventListener('unhandledrejection',function(e){ st.err.push(String((e.reason&&e.reason.message)||e.reason)); });
+  function load(src,ms){ return new Promise(function(res){
+    var s=document.createElement('script'),done=false,t;
+    function fin(ok){ if(done) return; done=true; clearTimeout(t); res(ok); }
+    t=setTimeout(function(){ fin(false); },ms); s.async=false; s.onload=function(){ fin(true); }; s.onerror=function(){ fin(false); }; s.src=src; document.head.appendChild(s);
+  }); }
+  (async function(){
+    var cdn=[['jsdelivr','https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'],['unpkg','https://unpkg.com/@supabase/supabase-js@2']];
+    for(var i=0;i<cdn.length;i++){ if(window.supabase) break; st.ok[cdn[i][0]]=await load(cdn[i][1],8000); }
+    st.ok.config=await load('config.js?v='+V,10000);
+    st.ok.app=await load('app.js?v='+V,10000);
+  })();
+  setTimeout(function(){
+    var b=document.getElementById('boot'); if(!b||b.hidden) return;
+    var d=Object.keys(st.ok).map(function(k){ return k+': '+(st.ok[k]?'ok':'нет'); }).join(', ')+'; supabase: '+(window.supabase?'ok':'нет')+(st.err.length?'; ошибка: '+st.err[0]:'');
+    b.innerHTML='<div style="text-align:center;padding:24px;color:#aaa;font:14px/1.5 sans-serif">Не удалось запустить приложение.<br><small>'+d.replace(/</g,'&lt;')+'</small><br><br><button onclick="location.reload()" style="padding:12px 22px;border-radius:12px;background:#fff;color:#000;font-weight:600">Перезагрузить</button></div>';
+  },14000);
+})();
+</script>
 </body>
 </html>

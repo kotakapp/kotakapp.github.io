@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>KotakApp</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Unbounded:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="auth-wrap" id="auth-wrap">
+  <form class="auth-card" id="auth-form">
+    <div class="logo auth-logo"><span class="logo-box"></span>kotak</div>
+    <h1 id="auth-title">С возвращением</h1>
+    <p class="muted" id="auth-hint">Войди в свой аккаунт KotakApp</p>
+    <label>Username<input id="auth-username" autocomplete="username" minlength="3" maxlength="24" placeholder="например, alex_01" required></label>
+    <label>Пароль<input id="auth-password" type="password" autocomplete="current-password" minlength="8" placeholder="Не менее 8 символов" required></label>
+    <button class="primary" id="auth-submit">Войти</button>
+    <p class="auth-error" id="auth-error" role="alert"></p>
+    <button class="switch-auth" type="button" id="auth-switch">Нет аккаунта? Зарегистрироваться</button>
+    <p class="tiny muted">Регистрация по username. Для восстановления пароля позже добавим подтверждённый способ связи.</p>
+  </form>
+</div>
+<div class="app" id="app" data-view="list" hidden>
+  <aside class="side">
+    <header class="side-head"><div class="logo"><span class="logo-box"></span>kotak</div></header>
+    <div class="pane" id="pane-chats">
+      <div class="search"><input id="q" type="search" placeholder="Поиск по чатам" autocomplete="off"></div>
+      <ul class="list" id="chat-list"></ul>
+    </div>
+    <div class="pane" id="pane-contacts" hidden>
+      <div class="search"><input id="user-search" type="search" placeholder="Найти по username" autocomplete="off"></div>
+      <ul class="list" id="contact-list"></ul>
+    </div>
+    <div class="pane" id="pane-profile" hidden>
+      <div class="profile"><div class="avatar big" id="me-av"></div><h2 id="me-name"></h2><p class="muted" id="me-user"></p><button class="secondary" id="push-btn">Включить уведомления</button><button class="secondary" id="logout">Выйти из аккаунта</button></div>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button data-tab="chats" class="on">Чаты</button><button data-tab="contacts">Контакты</button><button data-tab="profile">Профиль</button>
+    </nav>
+  </aside>
+  <main class="chat">
+    <div class="empty" id="empty"><div class="logo-box lg"></div><p>Выберите чат, чтобы начать</p></div>
+    <section class="room" id="room" hidden>
+      <header class="room-head"><button class="back" id="back" aria-label="Назад">‹</button><div class="avatar" id="room-av"></div><div><div class="title" id="room-title"></div><div class="muted small" id="room-sub">KotakApp</div></div></header>
+      <div class="msgs" id="msgs"></div>
+      <div class="reply-bar" id="reply-bar" hidden><span id="reply-text"></span><button id="reply-x" aria-label="Отменить ответ">×</button></div>
+      <form class="composer" id="composer"><input id="text" placeholder="Сообщение" autocomplete="off" maxlength="5000"><button class="send" aria-label="Отправить">↑</button></form>
+    </section>
+  </main>
+</div>
+<div class="toast" id="toast" role="status"></div>
+<div class="sheet" id="sheet" hidden><div class="sheet-body"><div class="react-row" id="react-row"></div><button id="act-reply">Ответить</button><button id="act-close" class="muted">Закрыть</button></div></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

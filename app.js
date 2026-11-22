@@ -127,7 +127,7 @@ async function loadChats() {
   if(!ids.length) { chats=[]; renderChats(); return; }
   const {data:allMembers,error:memberError}=await client.from('conversation_members').select('conversation_id,user_id,last_read_at,last_delivered_at,profiles(username,display_name)').in('conversation_id',ids);
   if(memberError) throw memberError;
-  const {data:lastMessages,error:msgError}=await client.from('messages').select('id,conversation_id,sender_id,content,created_at').in('conversation_id',ids).order('created_at',{ascending:false});
+  const {data:lastMessages,error:msgError}=await client.from('messages').select('id,conversation_id,sender_id,content,created_at,message_type').in('conversation_id',ids).order('created_at',{ascending:false});
   if(msgError) throw msgError;
   chats=(members||[]).filter(row=>row.conversations).map(row=>{
     const c=row.conversations; const participants=(allMembers||[]).filter(x=>x.conversation_id===c.id);
@@ -170,7 +170,7 @@ function markDelivered(){
 function renderChats() {
   const total=chats.reduce((s,c)=>s+unreadOf(c),0); document.title=total?`(${total}) KotakApp`:'KotakApp';
   const q=$('q').value.trim().toLowerCase();
-  $('chat-list').innerHTML=chats.filter(c=>c.title.toLowerCase().includes(q)).map(c=>`<li><button class="item ${current?.id===c.id?'on':''}" data-chat="${c.id}"><div class="avatar">${esc(initials(c.title))}${c.type==='direct'&&online.has(c.otherId)?'<span class="dot"></span>':''}</div><div class="meta"><div class="row"><span class="name">${esc(c.title)}</span><span class="muted small">${c.last?time(c.last.created_at):''}</span></div><div class="row2"><div class="last">${isTyping(c)?'печатает…':c.last?esc(c.last.content||'Вложение'):'Сообщений пока нет'}</div>${badge(c)}</div></div></button></li>`).join('')||'<li class="muted" style="padding:20px">Чатов пока нет. Найди друзей во вкладке «Контакты».</li>';
+  $('chat-list').innerHTML=chats.filter(c=>c.title.toLowerCase().includes(q)).map(c=>`<li><button class="item ${current?.id===c.id?'on':''}" data-chat="${c.id}"><div class="avatar">${esc(initials(c.title))}${c.type==='direct'&&online.has(c.otherId)?'<span class="dot"></span>':''}</div><div class="meta"><div class="row"><span class="name">${esc(c.title)}</span><span class="muted small">${c.last?time(c.last.created_at):''}</span></div><div class="row2"><div class="last">${isTyping(c)?'печатает…':c.last?(c.last.message_type==='voice'?'🎤 Голосовое':esc(c.last.content||'Вложение')):'Сообщений пока нет'}</div>${badge(c)}</div></div></button></li>`).join('')||'<li class="muted" style="padding:20px">Чатов пока нет. Найди друзей во вкладке «Контакты».</li>';
 }
 async function searchUsers() {
   const q=$('user-search').value.trim().toLowerCase();
@@ -205,25 +205,90 @@ function appendMessage(m) {
   const exists=$('msgs').querySelector(`[data-id="${m.id}"]`); if(exists) return;
   const mine=m.sender_id===me.id;
   const div=document.createElement('div'); div.className='m '+(mine?'me':''); div.dataset.id=m.id;
+  const body=(m.message_type==='voice'&&m.media_path)
+    ? `<div class="vm"><button type="button" class="vplay" data-path="${esc(m.media_path)}" data-ms="${Number(m.media_duration_ms)||0}" aria-label="Воспроизвести">▶</button><div class="vbar"><i></i></div><span class="vdur">${fmtDur(m.media_duration_ms)}</span></div>`
+    : esc(m.content||'');
   div.dataset.t=m.created_at;
-  div.innerHTML=`${esc(m.content||'') }<div class="t"><span class="tm">${time(m.created_at)}</span>${mine?' <span class="tick"></span>':''}</div>`;
+  div.innerHTML=`${body}<div class="t"><span class="tm">${time(m.created_at)}</span>${mine?' <span class="tick"></span>':''}</div>`;
   if(mine) paintTick(div.querySelector('.tick'),m.created_at);
   $('msgs').appendChild(div); $('msgs').scrollTop=1e9;
 }
 async function loadMessages() {
-  const {data,error}=await client.from('messages').select('*').eq('conversation_id',current.id).order('created_at',{ascending:true}).limit(200);
+  const {data,error}=await client.from('messages').select('*').eq('conversation_id',current.id).order('created_at',{ascending:false}).limit(200);
   if(error) { toast(error.message); return; }
-  $('msgs').innerHTML=''; (data||[]).forEach(appendMessage);
+  $('msgs').innerHTML=''; (data||[]).slice().reverse().forEach(appendMessage);
 }
 async function sendMessage(event) {
-  event.preventDefault(); const content=$('text').value.trim(); if(!content||!current) return;
-  $('text').value=''; $('text').style.height='auto'; stopTyping();
+  event.preventDefault(); if(rec){ stopRecording(true); return; }
+  const content=$('text').value.trim(); if(!content||!current) return;
+  $('text').value=''; $('text').style.height='auto'; stopTyping(); syncBtns();
   const {data,error}=await client.from('messages').insert({conversation_id:current.id,sender_id:me.id,content,message_type:'text'}).select().single();
-  if(error) { $('text').value=content; toast(error.message); return; }
+  if(error) { $('text').value=content; syncBtns(); toast(error.message); return; }
   appendMessage(data); loadChats().catch(()=>{});
 }
+const fmtDur=ms=>{ const s=Math.round((Number(ms)||0)/1000); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); };
+function syncBtns(){ if(rec) return; const has=$('text').value.trim().length>0; $('mic').hidden=has; $('send-btn').hidden=!has; }
+function setRecUI(on){ $('text').hidden=on; $('recbar').hidden=!on; if(on){ $('mic').hidden=true; $('send-btn').hidden=false; } else syncBtns(); }
+
+let rec=null;
+async function startRecording(){
+  if(!current||rec) return;
+  if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder) return toast('Запись голоса не поддерживается в этом браузере.');
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    const mime=['audio/webm;codecs=opus','audio/webm','audio/mp4'].find(t=>MediaRecorder.isTypeSupported(t))||'';
+    const mr=new MediaRecorder(stream,mime?{mimeType:mime,audioBitsPerSecond:32000}:{audioBitsPerSecond:32000});
+    const r={mr,stream,chunks:[],start:Date.now(),ms:0,cancelled:false,convId:current.id};
+    mr.ondataavailable=e=>{ if(e.data&&e.data.size) r.chunks.push(e.data); };
+    mr.onstop=()=>finishRecording(r);
+    mr.start(250); rec=r; stopTyping(); setRecUI(true); $('rec-time').textContent='0:00';
+    r.timer=setInterval(()=>{ const ms=Date.now()-r.start; $('rec-time').textContent=fmtDur(ms); if(ms>600000) stopRecording(true); },250);
+  }catch(e){ toast('Нет доступа к микрофону. Разреши его для сайта в настройках Chrome.'); }
+}
+function stopRecording(send){
+  const r=rec; if(!r) return; rec=null;
+  r.cancelled=!send; r.ms=Date.now()-r.start; clearInterval(r.timer);
+  if(r.mr.state!=='inactive') r.mr.stop();
+  r.stream.getTracks().forEach(t=>t.stop()); setRecUI(false);
+}
+async function finishRecording(r){
+  if(r.cancelled||!r.chunks.length) return;
+  if(r.ms<700) return toast('Слишком короткое сообщение');
+  try{
+    const type=(r.mr.mimeType||'audio/webm').split(';')[0];
+    const ext=type.includes('mp4')?'m4a':'webm';
+    const blob=new Blob(r.chunks,{type});
+    const path=`${r.convId}/${me.id}/${Date.now()}.${ext}`;
+    const up=await client.storage.from('voice').upload(path,blob,{contentType:type});
+    if(up.error) throw up.error;
+    const {data,error}=await client.from('messages').insert({conversation_id:r.convId,sender_id:me.id,content:'',message_type:'voice',media_path:path,media_duration_ms:r.ms}).select().single();
+    if(error) throw error;
+    appendMessage(data); loadChats().catch(()=>{});
+  }catch(e){ toast('Голосовое не отправлено: '+(e.message||e)); }
+}
+
+let voiceAudio=null, voiceBtn=null;
+function stopVoice(){
+  if(voiceAudio){ voiceAudio.pause(); voiceAudio=null; }
+  if(voiceBtn){ voiceBtn.textContent='▶'; const i=voiceBtn.parentElement.querySelector('.vbar i'); if(i) i.style.width='0'; voiceBtn=null; }
+}
+async function toggleVoice(btn){
+  if(voiceBtn===btn&&voiceAudio){ voiceAudio.paused?voiceAudio.play():voiceAudio.pause(); return; }
+  stopVoice(); btn.textContent='…';
+  try{
+    const {data,error}=await client.storage.from('voice').createSignedUrl(btn.dataset.path,3600);
+    if(error) throw error;
+    const a=new Audio(data.signedUrl); voiceAudio=a; voiceBtn=btn;
+    const bar=btn.parentElement.querySelector('.vbar i');
+    a.ontimeupdate=()=>{ const total=Number.isFinite(a.duration)?a.duration:(Number(btn.dataset.ms)/1000); if(total>0) bar.style.width=Math.min(100,a.currentTime/total*100)+'%'; };
+    a.onplay=()=>{ btn.textContent='❚❚'; }; a.onpause=()=>{ if(!a.ended) btn.textContent='▶'; };
+    a.onended=()=>{ stopVoice(); };
+    await a.play();
+  }catch(e){ btn.textContent='▶'; voiceBtn=null; voiceAudio=null; toast('Не удалось воспроизвести: '+(e.message||e)); }
+}
+
 let roomPushed=false;
-function closeRoom(){ stopTyping(); $('app').dataset.view='list'; current=null; replyTo=null; $('room').hidden=true; $('empty').hidden=false; renderChats(); }
+function closeRoom(){ stopTyping(); stopRecording(false); stopVoice(); $('app').dataset.view='list'; current=null; replyTo=null; $('room').hidden=true; $('empty').hidden=false; renderChats(); }
 window.addEventListener('popstate',()=>{ roomPushed=false; if($('app').dataset.view==='room') closeRoom(); });
 function setTab(tab) {
   for(const name of ['chats','contacts','profile']) $('pane-'+name).hidden=name!==tab;
@@ -239,11 +304,13 @@ $('contact-list').onclick=e=>{const b=e.target.closest('[data-user]');if(b)start
 $('chat-list').onclick=e=>{const b=e.target.closest('[data-chat]');if(b){const c=chats.find(x=>x.id===b.dataset.chat);if(c)openChat(c);}};
 $('back').onclick=()=>{ if(roomPushed) history.back(); else closeRoom(); };
 $('composer').onsubmit=sendMessage;
-$('text').addEventListener('input',()=>{ noteTyping(); const t=$('text'); t.style.height='auto'; t.style.height=Math.min(t.scrollHeight,140)+'px'; });
+$('mic').onclick=startRecording;
+$('rec-cancel').onclick=()=>stopRecording(false);
+$('text').addEventListener('input',()=>{ noteTyping(); syncBtns(); const t=$('text'); t.style.height='auto'; t.style.height=Math.min(t.scrollHeight,140)+'px'; });
 $('text').addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey&&!matchMedia('(pointer:coarse)').matches){ e.preventDefault(); $('composer').requestSubmit(); } });
 $('logout').onclick=logout;
 $('react-row').innerHTML=EMOJI.map(x=>`<button data-e="${x}">${x}</button>`).join('');
-$('msgs').onclick=e=>{const m=e.target.closest('.m');if(!m)return;target={id:m.dataset.id,text:m.textContent};$('sheet').hidden=false;};
+$('msgs').onclick=e=>{const pb=e.target.closest('.vplay');if(pb){toggleVoice(pb);return;}const m=e.target.closest('.m');if(!m)return;target={id:m.dataset.id,text:m.textContent};$('sheet').hidden=false;};
 $('react-row').onclick=()=>toast('Реакции подключим следующим этапом.');
 $('act-reply').onclick=()=>{if(target){$('reply-text').textContent='Ответ: '+target.text;$('reply-bar').hidden=false;}$('sheet').hidden=true;};
 $('reply-x').onclick=()=>$('reply-bar').hidden=true;

@@ -51,7 +51,7 @@
       <header class="room-head"><button class="back" id="back" aria-label="Назад">‹</button><div class="avatar" id="room-av"></div><div><div class="title" id="room-title"></div><div class="muted small" id="room-sub">KotakApp</div></div></header>
       <div class="msgs" id="msgs"></div>
       <div class="reply-bar" id="reply-bar" hidden><span id="reply-text"></span><button id="reply-x" aria-label="Отменить ответ">×</button></div>
-      <form class="composer" id="composer" autocomplete="off"><textarea id="text" name="kotak-msg" rows="1" placeholder="Сообщение" autocomplete="off" maxlength="5000" enterkeyhint="send" data-lpignore="true" data-form-type="other"></textarea><button class="send" aria-label="Отправить">↑</button></form>
+      <form class="composer" id="composer" autocomplete="off"><textarea id="text" name="kotak-msg" rows="1" placeholder="Сообщение" autocomplete="off" maxlength="5000" enterkeyhint="send" data-lpignore="true" data-form-type="other"></textarea><div class="recbar" id="recbar" hidden><button type="button" id="rec-cancel" aria-label="Отменить запись">✕</button><span class="recdot"></span><span id="rec-time">0:00</span></div><button type="button" class="mic" id="mic" aria-label="Записать голосовое"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button><button class="send" id="send-btn" aria-label="Отправить" hidden>↑</button></form>
     </section>
   </main>
 </div>

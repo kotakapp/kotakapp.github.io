@@ -66,7 +66,9 @@ async function loadSession() {
   $('me-name').textContent=me.display_name||me.username;
   $('me-user').textContent='@'+me.username;
   await loadChats();
+  markDelivered();
   startRealtime();
+  startPresence();
 }
 
 let rt=null;
@@ -74,21 +76,56 @@ function startRealtime(){
   if(rt) return;
   rt=client.channel('inbox').on('postgres_changes',{event:'INSERT',schema:'public',table:'messages'},payload=>{
     const m=payload.new;
-    if(current && m.conversation_id===current.id) appendMessage(m);
+    if(current && m.conversation_id===current.id){ appendMessage(m); if(m.sender_id!==me.id && document.visibilityState==='visible') markRead(current.id); }
+    if(m.sender_id!==me.id) markDelivered();
     clearTimeout(window.rtTimer); window.rtTimer=setTimeout(()=>loadChats().catch(()=>{}),300);
+  }).on('postgres_changes',{event:'UPDATE',schema:'public',table:'conversation_members'},payload=>{
+    const r=payload.new; const chat=chats.find(c=>c.id===r.conversation_id); const p=chat?.participants.find(x=>x.user_id===r.user_id);
+    if(!p) return; p.last_read_at=r.last_read_at; p.last_delivered_at=r.last_delivered_at;
+    if(current && current.id===chat.id) updateTicks(); renderChats();
   }).subscribe((status,err)=>{ if(status==='CHANNEL_ERROR'||status==='TIMED_OUT') toast('Реальное время: '+(err?.message||status)); });
 }
 async function stopRealtime(){ if(rt){ await client.removeChannel(rt); rt=null; } }
+
+let pres=null, online=new Set(), typingMap={}, typingSent=false, typingTimer=null;
+const isTyping=c=>c.type==='direct'&&c.otherId&&typingMap[c.otherId]===c.id;
+function startPresence(){
+  if(pres||!me) return;
+  pres=client.channel('presence-online',{config:{presence:{key:me.id}}});
+  pres.on('presence',{event:'sync'},()=>{
+    const st=pres.presenceState(); online=new Set(); typingMap={};
+    for(const [uid,metas] of Object.entries(st)){ online.add(uid); const t=metas.map(x=>x.typing_in).filter(Boolean).pop(); if(t) typingMap[uid]=t; }
+    renderChats(); updateRoomStatus();
+  }).subscribe(async status=>{ if(status==='SUBSCRIBED') await pres.track({typing_in:null}); });
+}
+async function stopPresence(){ if(pres){ await client.removeChannel(pres); pres=null; online=new Set(); typingMap={}; typingSent=false; } }
+function updateRoomStatus(){
+  if(!current) return; const c=currentChat(); if(!c) return;
+  let text, live=false;
+  if(c.type==='group') text='Групповой чат';
+  else if(isTyping(c)){ text='печатает…'; live=true; }
+  else if(online.has(c.otherId)){ text='в сети'; live=true; }
+  else text='не в сети';
+  $('room-sub').textContent=text; $('room-sub').classList.toggle('live',live);
+}
+function stopTyping(){ clearTimeout(typingTimer); if(typingSent&&pres){ typingSent=false; pres.track({typing_in:null}); } }
+function noteTyping(){
+  if(!pres||!current) return;
+  if($('text').value.trim()===''){ stopTyping(); return; }
+  if(!typingSent){ typingSent=true; pres.track({typing_in:current.id}); }
+  clearTimeout(typingTimer); typingTimer=setTimeout(stopTyping,3000);
+}
 document.addEventListener('visibilitychange',()=>{
+  if(me&&pres){ if(document.visibilityState==='visible') pres.track({typing_in:null}); else { stopTyping(); pres.untrack(); } }
   if(document.visibilityState!=='visible'||!me) return;
-  loadChats().catch(()=>{}); if(current) loadMessages().catch(()=>{});
+  loadChats().then(()=>{ markDelivered(); if(current){ loadMessages().then(()=>markRead(current.id)).catch(()=>{}); } }).catch(()=>{});
 });
 async function loadChats() {
   const {data:members,error}=await client.from('conversation_members').select('conversation_id, conversations(id,type,title,created_at)').eq('user_id',me.id);
   if(error) throw error;
   const ids=(members||[]).map(x=>x.conversation_id);
   if(!ids.length) { chats=[]; renderChats(); return; }
-  const {data:allMembers,error:memberError}=await client.from('conversation_members').select('conversation_id,user_id,profiles(username,display_name)').in('conversation_id',ids);
+  const {data:allMembers,error:memberError}=await client.from('conversation_members').select('conversation_id,user_id,last_read_at,last_delivered_at,profiles(username,display_name)').in('conversation_id',ids);
   if(memberError) throw memberError;
   const {data:lastMessages,error:msgError}=await client.from('messages').select('id,conversation_id,sender_id,content,created_at').in('conversation_id',ids).order('created_at',{ascending:false});
   if(msgError) throw msgError;
@@ -96,13 +133,44 @@ async function loadChats() {
     const c=row.conversations; const participants=(allMembers||[]).filter(x=>x.conversation_id===c.id);
     const other=participants.find(x=>x.user_id!==me.id)?.profiles;
     const title=c.type==='group'?(c.title||'Группа'):(other?.display_name||other?.username||'Новый чат');
-    return {id:c.id,type:c.type,title,otherUsername:other?.username,participants,last:(lastMessages||[]).find(m=>m.conversation_id===c.id)||null};
+    return {id:c.id,type:c.type,title,otherId:participants.find(x=>x.user_id!==me.id)?.user_id,otherUsername:other?.username,participants,incoming:(lastMessages||[]).filter(m=>m.conversation_id===c.id&&m.sender_id!==me.id).map(m=>m.created_at),last:(lastMessages||[]).find(m=>m.conversation_id===c.id)||null};
   }).sort((a,b)=>new Date(b.last?.created_at||0)-new Date(a.last?.created_at||0));
   renderChats();
 }
+function unreadOf(c){
+  const mine=(c.participants||[]).find(x=>x.user_id===me.id); if(!mine?.last_read_at) return 0;
+  const lr=new Date(mine.last_read_at).getTime();
+  return (c.incoming||[]).filter(t=>new Date(t).getTime()>lr).length;
+}
+function badge(c){ const n=unreadOf(c); return n?`<span class="badge">${n>99?'99+':n}</span>`:''; }
+const currentChat=()=>chats.find(c=>c.id===current?.id)||current;
+function tickState(createdAt){
+  const others=(currentChat()?.participants||[]).filter(x=>x.user_id!==me.id);
+  if(!others.length) return 'sent';
+  const t=new Date(createdAt).getTime();
+  if(others.every(x=>x.last_read_at&&new Date(x.last_read_at).getTime()>=t)) return 'read';
+  if(others.every(x=>x.last_delivered_at&&new Date(x.last_delivered_at).getTime()>=t)) return 'delivered';
+  return 'sent';
+}
+function paintTick(el,createdAt){ if(!el) return; const s=tickState(createdAt); el.className='tick '+s; el.textContent=s==='sent'?'✓':'✓✓'; }
+function updateTicks(){ document.querySelectorAll('#msgs .m.me').forEach(d=>paintTick(d.querySelector('.tick'),d.dataset.t)); }
+async function markRead(id){
+  if(!id||!me) return;
+  try{
+    const {error}=await client.rpc('mark_conversation_read',{conv:id}); if(error) throw error;
+    const p=chats.find(c=>c.id===id)?.participants.find(x=>x.user_id===me.id);
+    if(p){ p.last_read_at=new Date().toISOString(); p.last_delivered_at=p.last_read_at; renderChats(); }
+  }catch(e){ console.warn('mark read',e); }
+}
+let lastDel=0;
+function markDelivered(){
+  if(!me||Date.now()-lastDel<2000) return; lastDel=Date.now();
+  client.rpc('mark_delivered').then(({error})=>{ if(error) console.warn('mark delivered',error); });
+}
 function renderChats() {
+  const total=chats.reduce((s,c)=>s+unreadOf(c),0); document.title=total?`(${total}) KotakApp`:'KotakApp';
   const q=$('q').value.trim().toLowerCase();
-  $('chat-list').innerHTML=chats.filter(c=>c.title.toLowerCase().includes(q)).map(c=>`<li><button class="item ${current?.id===c.id?'on':''}" data-chat="${c.id}"><div class="avatar">${esc(initials(c.title))}</div><div class="meta"><div class="row"><span class="name">${esc(c.title)}</span><span class="muted small">${c.last?time(c.last.created_at):''}</span></div><div class="row2"><div class="last">${c.last?esc(c.last.content||'Вложение'):'Сообщений пока нет'}</div></div></div></button></li>`).join('')||'<li class="muted" style="padding:20px">Чатов пока нет. Найди друзей во вкладке «Контакты».</li>';
+  $('chat-list').innerHTML=chats.filter(c=>c.title.toLowerCase().includes(q)).map(c=>`<li><button class="item ${current?.id===c.id?'on':''}" data-chat="${c.id}"><div class="avatar">${esc(initials(c.title))}${c.type==='direct'&&online.has(c.otherId)?'<span class="dot"></span>':''}</div><div class="meta"><div class="row"><span class="name">${esc(c.title)}</span><span class="muted small">${c.last?time(c.last.created_at):''}</span></div><div class="row2"><div class="last">${isTyping(c)?'печатает…':c.last?esc(c.last.content||'Вложение'):'Сообщений пока нет'}</div>${badge(c)}</div></div></button></li>`).join('')||'<li class="muted" style="padding:20px">Чатов пока нет. Найди друзей во вкладке «Контакты».</li>';
 }
 async function searchUsers() {
   const q=$('user-search').value.trim().toLowerCase();
@@ -126,17 +194,20 @@ async function openChat(chat) {
   current=chat; replyTo=null; $('reply-bar').hidden=true; $('room').hidden=false; $('empty').hidden=true;
   $('room-av').textContent=initials(chat.title); $('room-title').textContent=chat.title;
   $('room-sub').textContent=chat.type==='group'?'Групповой чат':'KotakApp'; $('app').dataset.view='room';
+  updateRoomStatus();
   if(!roomPushed){ history.pushState({room:1},''); roomPushed=true; }
   await loadMessages();
-
   renderChats();
+  markRead(chat.id);
 }
 function appendMessage(m) {
   if(!current || m.conversation_id!==current.id) return;
   const exists=$('msgs').querySelector(`[data-id="${m.id}"]`); if(exists) return;
   const mine=m.sender_id===me.id;
   const div=document.createElement('div'); div.className='m '+(mine?'me':''); div.dataset.id=m.id;
-  div.innerHTML=`${esc(m.content||'') }<div class="t">${time(m.created_at)}${mine?' ✓':''}</div>`;
+  div.dataset.t=m.created_at;
+  div.innerHTML=`${esc(m.content||'') }<div class="t"><span class="tm">${time(m.created_at)}</span>${mine?' <span class="tick"></span>':''}</div>`;
+  if(mine) paintTick(div.querySelector('.tick'),m.created_at);
   $('msgs').appendChild(div); $('msgs').scrollTop=1e9;
 }
 async function loadMessages() {
@@ -146,19 +217,19 @@ async function loadMessages() {
 }
 async function sendMessage(event) {
   event.preventDefault(); const content=$('text').value.trim(); if(!content||!current) return;
-  $('text').value=''; $('text').style.height='auto';
+  $('text').value=''; $('text').style.height='auto'; stopTyping();
   const {data,error}=await client.from('messages').insert({conversation_id:current.id,sender_id:me.id,content,message_type:'text'}).select().single();
   if(error) { $('text').value=content; toast(error.message); return; }
   appendMessage(data); loadChats().catch(()=>{});
 }
 let roomPushed=false;
-function closeRoom(){ $('app').dataset.view='list'; current=null; replyTo=null; $('room').hidden=true; $('empty').hidden=false; renderChats(); }
+function closeRoom(){ stopTyping(); $('app').dataset.view='list'; current=null; replyTo=null; $('room').hidden=true; $('empty').hidden=false; renderChats(); }
 window.addEventListener('popstate',()=>{ roomPushed=false; if($('app').dataset.view==='room') closeRoom(); });
 function setTab(tab) {
   for(const name of ['chats','contacts','profile']) $('pane-'+name).hidden=name!==tab;
   document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab));
 }
-async function logout() { await stopRealtime(); await client.auth.signOut(); current=null; chats=[]; $('app').hidden=true; $('auth-wrap').hidden=false; setAuthMode('login'); }
+async function logout() { await stopRealtime(); await stopPresence(); await client.auth.signOut(); current=null; chats=[]; $('app').hidden=true; $('auth-wrap').hidden=false; setAuthMode('login'); }
 $('auth-form').addEventListener('submit',authSubmit);
 $('auth-switch').onclick=()=>setAuthMode(authMode==='login'?'register':'login');
 $('tabs').onclick=e=>{const b=e.target.closest('button[data-tab]');if(b)setTab(b.dataset.tab);};
@@ -168,7 +239,7 @@ $('contact-list').onclick=e=>{const b=e.target.closest('[data-user]');if(b)start
 $('chat-list').onclick=e=>{const b=e.target.closest('[data-chat]');if(b){const c=chats.find(x=>x.id===b.dataset.chat);if(c)openChat(c);}};
 $('back').onclick=()=>{ if(roomPushed) history.back(); else closeRoom(); };
 $('composer').onsubmit=sendMessage;
-$('text').addEventListener('input',()=>{ const t=$('text'); t.style.height='auto'; t.style.height=Math.min(t.scrollHeight,140)+'px'; });
+$('text').addEventListener('input',()=>{ noteTyping(); const t=$('text'); t.style.height='auto'; t.style.height=Math.min(t.scrollHeight,140)+'px'; });
 $('text').addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey&&!matchMedia('(pointer:coarse)').matches){ e.preventDefault(); $('composer').requestSubmit(); } });
 $('logout').onclick=logout;
 $('react-row').innerHTML=EMOJI.map(x=>`<button data-e="${x}">${x}</button>`).join('');

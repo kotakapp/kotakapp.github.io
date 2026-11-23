@@ -7,6 +7,7 @@ const client = window.supabase?.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_PUBL
 let me = null, chats = [], current = null, replyTo = null, target = null, channel = null;
 let authMode = 'login';
 let reactions = [], msgMap = new Map(), reactWarned = false;
+let hiddenIds = new Set(), editing = null;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const initials = value => (String(value || '?').trim()[0] || '?').toUpperCase();
 const time = value => new Date(value).toLocaleTimeString('ru', {hour:'2-digit', minute:'2-digit'});
@@ -66,12 +67,18 @@ async function loadSession() {
   $('me-av').textContent=initials(me.display_name||me.username);
   $('me-name').textContent=me.display_name||me.username;
   $('me-user').textContent='@'+me.username;
+  await loadHidden();
   await loadChats();
   markDelivered();
   startRealtime();
   startPresence();
 }
 
+async function loadHidden(){
+  const {data,error}=await client.from('message_hides').select('message_id').eq('user_id',me.id);
+  if(error){ console.warn('message_hides',error); return; }
+  hiddenIds=new Set((data||[]).map(r=>r.message_id));
+}
 let rt=null;
 function startRealtime(){
   if(rt) return;
@@ -84,6 +91,9 @@ function startRealtime(){
     const r=payload.new; const chat=chats.find(c=>c.id===r.conversation_id); const p=chat?.participants.find(x=>x.user_id===r.user_id);
     if(!p) return; p.last_read_at=r.last_read_at; p.last_delivered_at=r.last_delivered_at;
     if(current && current.id===chat.id) updateTicks(); renderChats();
+  }).on('postgres_changes',{event:'UPDATE',schema:'public',table:'messages'},payload=>{
+    const m=payload.new; if(current && m.conversation_id===current.id) refreshMessage(m);
+    clearTimeout(window.rtTimer); window.rtTimer=setTimeout(()=>loadChats().catch(()=>{}),300);
   }).on('postgres_changes',{event:'*',schema:'public',table:'reactions'},()=>{
     clearTimeout(window.rxTimer); window.rxTimer=setTimeout(()=>{ if(current) loadReactions().catch(()=>{}); },250);
   }).subscribe((status,err)=>{ if(status==='CHANNEL_ERROR'||status==='TIMED_OUT') toast('Реальное время: '+(err?.message||status)); });
@@ -130,8 +140,9 @@ async function loadChats() {
   if(!ids.length) { chats=[]; renderChats(); return; }
   const {data:allMembers,error:memberError}=await client.from('conversation_members').select('conversation_id,user_id,last_read_at,last_delivered_at,profiles(username,display_name)').in('conversation_id',ids);
   if(memberError) throw memberError;
-  const {data:lastMessages,error:msgError}=await client.from('messages').select('id,conversation_id,sender_id,content,created_at,message_type').in('conversation_id',ids).order('created_at',{ascending:false});
+  const {data:lm,error:msgError}=await client.from('messages').select('id,conversation_id,sender_id,content,created_at,message_type,deleted_at').in('conversation_id',ids).order('created_at',{ascending:false});
   if(msgError) throw msgError;
+  const lastMessages=(lm||[]).filter(m=>!hiddenIds.has(m.id));
   chats=(members||[]).filter(row=>row.conversations).map(row=>{
     const c=row.conversations; const participants=(allMembers||[]).filter(x=>x.conversation_id===c.id);
     const other=participants.find(x=>x.user_id!==me.id)?.profiles;
@@ -173,7 +184,7 @@ function markDelivered(){
 function renderChats() {
   const total=chats.reduce((s,c)=>s+unreadOf(c),0); document.title=total?`(${total}) KotakApp`:'KotakApp';
   const q=$('q').value.trim().toLowerCase();
-  $('chat-list').innerHTML=chats.filter(c=>c.title.toLowerCase().includes(q)).map(c=>`<li><button class="item ${current?.id===c.id?'on':''}" data-chat="${c.id}"><div class="avatar">${esc(initials(c.title))}${c.type==='direct'&&online.has(c.otherId)?'<span class="dot"></span>':''}</div><div class="meta"><div class="row"><span class="name">${esc(c.title)}</span><span class="muted small">${c.last?time(c.last.created_at):''}</span></div><div class="row2"><div class="last">${isTyping(c)?'печатает…':c.last?(c.last.message_type==='voice'?'🎤 Голосовое':esc(c.last.content||'Вложение')):'Сообщений пока нет'}</div>${badge(c)}</div></div></button></li>`).join('')||'<li class="muted" style="padding:20px">Чатов пока нет. Найди друзей во вкладке «Контакты».</li>';
+  $('chat-list').innerHTML=chats.filter(c=>c.title.toLowerCase().includes(q)).map(c=>`<li><button class="item ${current?.id===c.id?'on':''}" data-chat="${c.id}"><div class="avatar">${esc(initials(c.title))}${c.type==='direct'&&online.has(c.otherId)?'<span class="dot"></span>':''}</div><div class="meta"><div class="row"><span class="name">${esc(c.title)}</span><span class="muted small">${c.last?time(c.last.created_at):''}</span></div><div class="row2"><div class="last">${isTyping(c)?'печатает…':c.last?(c.last.deleted_at?'🚫 Сообщение удалено':c.last.message_type==='voice'?'🎤 Голосовое':esc(c.last.content||'Вложение')):'Сообщений пока нет'}</div>${badge(c)}</div></div></button></li>`).join('')||'<li class="muted" style="padding:20px">Чатов пока нет. Найди друзей во вкладке «Контакты».</li>';
 }
 async function searchUsers() {
   const q=$('user-search').value.trim().toLowerCase();
@@ -194,7 +205,7 @@ async function startDirectChat(userId, title) {
   } catch(e) { toast(e.message||String(e)); }
 }
 async function openChat(chat) {
-  current=chat; replyTo=null; $('reply-bar').hidden=true; $('room').hidden=false; $('empty').hidden=true;
+  cancelEdit(); current=chat; replyTo=null; $('reply-bar').hidden=true; $('room').hidden=false; $('empty').hidden=true;
   $('room-av').textContent=initials(chat.title); $('room-title').textContent=chat.title;
   $('room-sub').textContent=chat.type==='group'?'Группа':'KotakApp'; $('app').dataset.view='room';
   updateRoomStatus();
@@ -204,7 +215,7 @@ async function openChat(chat) {
   markRead(chat.id);
 }
 const nameOf=uid=>{ if(uid===me.id) return 'Вы'; const p=(currentChat()?.participants||[]).find(x=>x.user_id===uid)?.profiles; return p?.display_name||p?.username||'Участник'; };
-const previewOf=m=>m?(m.message_type==='voice'?'🎤 Голосовое':String(m.content||'Вложение').slice(0,90)):'Сообщение';
+const previewOf=m=>m?(m.deleted_at?'Сообщение удалено':m.message_type==='voice'?'🎤 Голосовое':String(m.content||'Вложение').slice(0,90)):'Сообщение';
 function quoteHtml(id){ const o=msgMap.get(id); return `<div class="q" data-goto="${esc(id)}"><b>${o?esc(nameOf(o.sender_id)):'Ответ'}</b> ${esc(previewOf(o))}</div>`; }
 async function fillQuote(div,id){
   if(msgMap.has(id)) return;
@@ -212,23 +223,38 @@ async function fillQuote(div,id){
   if(!data) return; msgMap.set(id,data);
   const q=div.querySelector('.q'); if(q) q.outerHTML=quoteHtml(id);
 }
-function appendMessage(m) {
-  if(!current || m.conversation_id!==current.id) return;
-  const exists=$('msgs').querySelector(`[data-id="${m.id}"]`); if(exists) return;
-  msgMap.set(m.id,m);
+function fillMessage(div,m){
   const mine=m.sender_id===me.id;
-  const div=document.createElement('div'); div.className='m '+(mine?'me':''); div.dataset.id=m.id;
+  div.className='m '+(mine?'me':'')+(m.deleted_at?' deleted':''); div.dataset.t=m.created_at;
+  if(m.deleted_at){
+    div.innerHTML=`<div class="del">🚫 Сообщение удалено</div><div class="t"><span class="tm">${time(m.created_at)}</span></div>`;
+    return;
+  }
   const body=(m.message_type==='voice'&&m.media_path)
     ? `<div class="vm"><button type="button" class="vplay" data-path="${esc(m.media_path)}" data-ms="${Number(m.media_duration_ms)||0}" aria-label="Воспроизвести">▶</button><div class="vbar"><i></i></div><span class="vdur">${fmtDur(m.media_duration_ms)}</span></div>`
     : esc(m.content||'');
-  const who=(current.type==='group'&&!mine)?`<div class="who">${esc(nameOf(m.sender_id))}</div>`:'';
+  const who=(current?.type==='group'&&!mine)?`<div class="who">${esc(nameOf(m.sender_id))}</div>`:'';
   const quote=m.reply_to_id?quoteHtml(m.reply_to_id):'';
-  div.dataset.t=m.created_at;
-  div.innerHTML=`${who}${quote}${body}<div class="t"><span class="tm">${time(m.created_at)}</span>${mine?' <span class="tick"></span>':''}</div><div class="rx"></div>`;
+  div.innerHTML=`${who}${quote}${body}<div class="t">${m.edited_at?'<span class="ed">изм.</span>':''}<span class="tm">${time(m.created_at)}</span>${mine?' <span class="tick"></span>':''}</div><div class="rx"></div>`;
   if(mine) paintTick(div.querySelector('.tick'),m.created_at);
-  $('msgs').appendChild(div); $('msgs').scrollTop=1e9;
   if(m.reply_to_id) fillQuote(div,m.reply_to_id).catch(()=>{});
   renderReactions(m.id);
+}
+function appendMessage(m) {
+  if(!current || m.conversation_id!==current.id) return;
+  if(hiddenIds.has(m.id)) return;
+  const exists=$('msgs').querySelector(`[data-id="${m.id}"]`); if(exists) return;
+  msgMap.set(m.id,m);
+  const div=document.createElement('div'); div.dataset.id=m.id;
+  fillMessage(div,m);
+  $('msgs').appendChild(div); $('msgs').scrollTop=1e9;
+}
+function refreshMessage(m){
+  const old=msgMap.get(m.id); m={...old,...m}; msgMap.set(m.id,m);
+  if(hiddenIds.has(m.id)) return;
+  const div=$('msgs').querySelector(`[data-id="${m.id}"]`);
+  if(div) fillMessage(div,m);
+  $('msgs').querySelectorAll(`.q[data-goto="${m.id}"]`).forEach(q=>{ q.outerHTML=quoteHtml(m.id); });
 }
 function renderReactions(mid){
   const div=$('msgs').querySelector(`[data-id="${mid}"]`); if(!div) return;
@@ -273,6 +299,14 @@ async function loadMessages() {
 async function sendMessage(event) {
   event.preventDefault(); if(rec){ stopRecording(true); return; }
   const content=$('text').value.trim(); if(!content||!current) return;
+  if(editing){
+    const ed=editing, old=msgMap.get(ed.id);
+    if(old && old.content===content){ cancelEdit(); return; }
+    const {error}=await client.rpc('edit_message',{msg:ed.id,new_content:content});
+    if(error){ toast('Изменение: '+error.message); return; }
+    cancelEdit(); stopTyping();
+    refreshMessage({id:ed.id,content,edited_at:new Date().toISOString()}); loadChats().catch(()=>{}); return;
+  }
   $('text').value=''; $('text').style.height='auto'; stopTyping(); syncBtns();
   const rid=replyTo?.id||null;
   const row={conversation_id:current.id,sender_id:me.id,content,message_type:'text'}; if(rid) row.reply_to_id=rid;
@@ -343,7 +377,7 @@ async function toggleVoice(btn){
 }
 
 let roomPushed=false;
-function closeRoom(){ stopTyping(); stopRecording(false); stopVoice(); $('app').dataset.view='list'; current=null; replyTo=null; $('reply-bar').hidden=true; $('room').hidden=true; $('empty').hidden=false; renderChats(); }
+function closeRoom(){ cancelEdit(); stopTyping(); stopRecording(false); stopVoice(); $('app').dataset.view='list'; current=null; replyTo=null; $('reply-bar').hidden=true; $('room').hidden=true; $('empty').hidden=false; renderChats(); }
 window.addEventListener('popstate',()=>{ roomPushed=false; if($('app').dataset.view==='room') closeRoom(); });
 function setTab(tab) {
   for(const name of ['chats','contacts','profile']) $('pane-'+name).hidden=name!==tab;
@@ -372,14 +406,42 @@ $('msgs').onclick=e=>{
   const m=e.target.closest('.m'); if(!m) return;
   const msg=msgMap.get(m.dataset.id); target={id:m.dataset.id,msg};
   $('react-row').querySelectorAll('button').forEach(b=>b.classList.toggle('on',reactions.some(r=>r.message_id===target.id&&r.user_id===me.id&&r.emoji===b.dataset.e)));
+  const mine=msg?.sender_id===me.id, del=!!msg?.deleted_at;
+  $('react-row').hidden=del; $('act-reply').hidden=del;
+  $('act-edit').hidden=!(mine&&!del&&msg.message_type!=='voice'); $('act-del-all').hidden=!(mine&&!del);
   $('sheet').hidden=false;
 };
 $('react-row').onclick=e=>{ const b=e.target.closest('[data-e]'); if(!b||!target) return; $('sheet').hidden=true; toggleReaction(target.id,b.dataset.e); };
 $('act-reply').onclick=()=>{
-  if(target){ replyTo={id:target.id}; $('reply-text').textContent='↩ '+nameOf(target.msg?.sender_id)+': '+previewOf(target.msg); $('reply-bar').hidden=false; }
+  if(target&&!target.msg?.deleted_at){ cancelEdit(); replyTo={id:target.id}; $('reply-text').textContent='↩ '+nameOf(target.msg?.sender_id)+': '+previewOf(target.msg); $('reply-bar').hidden=false; }
   $('sheet').hidden=true; $('text').focus();
 };
-$('reply-x').onclick=()=>{ replyTo=null; $('reply-bar').hidden=true; };
+$('reply-x').onclick=()=>{ if(editing) cancelEdit(); replyTo=null; $('reply-bar').hidden=true; };
+function cancelEdit(){
+  if(!editing) return; editing=null; $('text').value=''; $('text').style.height='auto'; $('reply-bar').hidden=true; syncBtns();
+}
+$('act-edit').onclick=()=>{
+  const msg=target?.msg; $('sheet').hidden=true; if(!msg) return;
+  editing={id:msg.id}; replyTo=null;
+  $('reply-text').textContent='✎ Изменение: '+previewOf(msg); $('reply-bar').hidden=false;
+  const t=$('text'); t.value=msg.content||''; t.style.height='auto'; t.style.height=Math.min(t.scrollHeight,140)+'px'; syncBtns(); t.focus();
+};
+$('act-del-me').onclick=async()=>{
+  const msg=target?.msg; $('sheet').hidden=true; if(!msg) return;
+  const {error}=await client.rpc('hide_message',{msg:msg.id});
+  if(error){ toast('Удаление: '+error.message); return; }
+  hiddenIds.add(msg.id); $('msgs').querySelector(`[data-id="${msg.id}"]`)?.remove();
+  if(editing?.id===msg.id) cancelEdit(); if(replyTo?.id===msg.id){ replyTo=null; $('reply-bar').hidden=true; }
+  loadChats().catch(()=>{});
+};
+$('act-del-all').onclick=async()=>{
+  const msg=target?.msg; $('sheet').hidden=true; if(!msg) return;
+  if(!confirm('Удалить сообщение у всех участников?')) return;
+  const {error}=await client.rpc('delete_message_for_all',{msg:msg.id});
+  if(error){ toast('Удаление: '+error.message); return; }
+  if(editing?.id===msg.id) cancelEdit(); if(replyTo?.id===msg.id){ replyTo=null; $('reply-bar').hidden=true; }
+  refreshMessage({id:msg.id,deleted_at:new Date().toISOString(),content:''}); loadChats().catch(()=>{});
+};
 $('act-close').onclick=()=>$('sheet').hidden=true;
 $('sheet').onclick=e=>{if(e.target===$('sheet'))$('sheet').hidden=true;};
 
@@ -441,6 +503,18 @@ async function togglePush(){
   }catch(e){ toast('Уведомления: '+(e.message||e)); }
 }
 $('push-btn').onclick=togglePush;
+const APP_VERSION='11';
+$('ver').textContent='Версия приложения: '+APP_VERSION;
+async function runDiag(){
+  const out=[]; const t=async(name,fn)=>{ try{ const r=await fn(); out.push((r&&r.error?'❌ ':'✅ ')+name+(r&&r.error?': '+r.error.message:'')); }catch(e){ out.push('❌ '+name+': '+(e.message||e)); } };
+  await t('messages.reply_to_id',()=>client.from('messages').select('id,reply_to_id').limit(1));
+  await t('таблица reactions',()=>client.from('reactions').select('message_id,user_id,emoji').limit(1));
+  await t('связь reactions → messages',()=>client.from('reactions').select('message_id,messages!inner(conversation_id)').limit(1));
+  await t('conversations.type/title',()=>client.from('conversations').select('id,type,title').limit(1));
+  alert(out.join('\n')+'\n\nЕсли есть ❌ — выполни SQL из v9 в Supabase → SQL Editor ещё раз.');
+}
+$('diag').onclick=runDiag;
+
 (async()=>{
   try {
   if(!client) { $('auth-error').textContent='Supabase не загрузился. Проверь интернет-соединение.'; return; }

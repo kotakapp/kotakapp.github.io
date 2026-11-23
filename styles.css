@@ -128,3 +128,7 @@ background:#1c1c1ecc;backdrop-filter:blur(20px) saturate(1.4);-webkit-backdrop-f
 .gbody .list{max-height:220px;overflow:auto;padding:0;margin-bottom:10px}
 .gbody .primary{margin-top:6px;text-align:center}
 .gbody .muted{text-align:center}
+
+.m .del{font-style:italic;opacity:.65}
+.m .ed{opacity:.6;font-size:11px;margin-right:4px}
+.sheet-body #act-del-me,.sheet-body #act-del-all{color:#ff6b6b}

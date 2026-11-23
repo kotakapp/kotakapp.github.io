@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Unbounded:wght@500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=8">
+<link rel="stylesheet" href="styles.css?v=9">
 </head>
 <body>
 <div class="boot" id="boot"><div class="logo-box lg"></div></div>
@@ -29,7 +29,7 @@
 </div>
 <div class="app" id="app" data-view="list" hidden>
   <aside class="side">
-    <header class="side-head"><div class="logo"><span class="logo-box"></span>kotak</div></header>
+    <header class="side-head"><div class="logo"><span class="logo-box"></span>kotak</div><button type="button" class="chip" id="new-group">+ Группа</button></header>
     <div class="pane" id="pane-chats">
       <div class="search"><input id="q" type="search" placeholder="Поиск по чатам" autocomplete="off"></div>
       <ul class="list" id="chat-list"></ul>
@@ -55,11 +55,20 @@
     </section>
   </main>
 </div>
+<div class="sheet" id="group-sheet" hidden><div class="sheet-body gbody">
+  <h3>Новая группа</h3>
+  <input id="g-title" maxlength="60" placeholder="Название группы" autocomplete="off">
+  <input id="g-search" type="search" placeholder="Найти участника по username" autocomplete="off">
+  <div class="gsel" id="g-sel"></div>
+  <ul class="list" id="g-results"></ul>
+  <button type="button" class="primary" id="g-create">Создать группу</button>
+  <button type="button" id="g-cancel" class="muted">Отмена</button>
+</div></div>
 <div class="toast" id="toast" role="status"></div>
 <div class="sheet" id="sheet" hidden><div class="sheet-body"><div class="react-row" id="react-row"></div><button id="act-reply">Ответить</button><button id="act-close" class="muted">Закрыть</button></div></div>
 <script>
 (function(){
-  var V='8', st={ok:{},err:[]};
+  var V='9', st={ok:{},err:[]};
   addEventListener('error',function(e){ st.err.push(e.message||'error'); });
   addEventListener('unhandledrejection',function(e){ st.err.push(String((e.reason&&e.reason.message)||e.reason)); });
   function load(src,ms){ return new Promise(function(res){

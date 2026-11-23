@@ -108,3 +108,23 @@ background:#1c1c1ecc;backdrop-filter:blur(20px) saturate(1.4);-webkit-backdrop-f
 .vbar{flex:1;height:4px;border-radius:2px;background:#88888866;overflow:hidden}
 .vbar i{display:block;height:100%;width:0;background:currentColor}
 .vdur{font-size:12.5px;opacity:.7;font-variant-numeric:tabular-nums}
+
+.side-head{display:flex;justify-content:space-between;align-items:center}
+.chip{padding:8px 14px;border-radius:16px;background:var(--s2);color:var(--tx);font-size:13.5px;font-weight:600;box-shadow:inset 0 0 0 1px var(--line)}
+.chip:active{transform:scale(.95)}
+.m .q{cursor:pointer;opacity:.8}.m .q b{font-weight:600;margin-right:4px}
+.m.flash{animation:flash 1.1s ease-out}
+@keyframes flash{0%,60%{box-shadow:0 0 0 2px #fff8}100%{box-shadow:none}}
+.m .rx:empty{display:none}
+.m .rx .rxc{font-size:13px;padding:2px 9px;border-radius:12px;background:#ffffff1c;color:inherit;width:auto}
+.m.me .rx .rxc{background:#0000001a}
+.m .rx .rxc.mine{box-shadow:inset 0 0 0 1.5px currentColor}
+.react-row button.on{background:#ffffff1f;border-radius:14px}
+.gbody{padding:16px;max-height:88dvh;overflow:auto}
+.gbody h3{font:600 18px var(--fd);margin-bottom:12px}
+.gbody input{width:100%;padding:13px 15px;border-radius:13px;background:var(--s3);margin-bottom:10px;outline:none}
+.gsel{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.gbody .gchip{width:auto;display:inline-block;padding:6px 12px;border-radius:14px;background:#fff;color:#000;font-size:13px;font-weight:600}
+.gbody .list{max-height:220px;overflow:auto;padding:0;margin-bottom:10px}
+.gbody .primary{margin-top:6px;text-align:center}
+.gbody .muted{text-align:center}

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>KotakApp</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Unbounded:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css?v=11">
+</head>
+<body>
+<script>
+(function(){try{
+  var V='11',k='kotak_ver';
+  if(localStorage.getItem(k)!==V){
+    localStorage.setItem(k,V);
+    var jobs=[];
+    if('serviceWorker' in navigator) jobs.push(navigator.serviceWorker.getRegistrations().then(function(r){return Promise.all(r.map(function(x){return x.unregister();}));}));
+    if(window.caches) jobs.push(caches.keys().then(function(ks){return Promise.all(ks.map(function(x){return caches.delete(x);}));}));
+    Promise.all(jobs).then(function(){ location.reload(); }).catch(function(){});
+  }
+}catch(e){}})();
+</script>
+<div class="boot" id="boot"><div class="logo-box lg"></div></div>
+<div class="auth-wrap" id="auth-wrap">
+  <form class="auth-card" id="auth-form">
+    <div class="logo auth-logo"><span class="logo-box"></span>kotak</div>
+    <h1 id="auth-title">С возвращением</h1>
+    <p class="muted" id="auth-hint">Войди в свой аккаунт KotakApp</p>
+    <label>Username<input id="auth-username" autocomplete="username" minlength="3" maxlength="24" placeholder="например, alex_01" required></label>
+    <label>Пароль<input id="auth-password" type="password" autocomplete="current-password" minlength="8" placeholder="Не менее 8 символов" required></label>
+    <button class="primary" id="auth-submit">Войти</button>
+    <p class="auth-error" id="auth-error" role="alert"></p>
+    <button class="switch-auth" type="button" id="auth-switch">Нет аккаунта? Зарегистрироваться</button>
+    <p class="tiny muted">Регистрация по username. Для восстановления пароля позже добавим подтверждённый способ связи.</p>
+  </form>
+</div>
+<div class="app" id="app" data-view="list" hidden>
+  <aside class="side">
+    <header class="side-head"><div class="logo"><span class="logo-box"></span>kotak</div><button type="button" class="chip" id="new-group">+ Группа</button></header>
+    <div class="pane" id="pane-chats">
+      <div class="search"><input id="q" type="search" placeholder="Поиск по чатам" autocomplete="off"></div>
+      <ul class="list" id="chat-list"></ul>
+    </div>
+    <div class="pane" id="pane-contacts" hidden>
+      <div class="search"><input id="user-search" type="search" placeholder="Найти по username" autocomplete="off"></div>
+      <ul class="list" id="contact-list"></ul>
+    </div>
+    <div class="pane" id="pane-profile" hidden>
+      <div class="profile"><div class="avatar big" id="me-av"></div><h2 id="me-name"></h2><p class="muted" id="me-user"></p><button class="secondary" id="push-btn">Включить уведомления</button><button class="secondary" id="diag">Проверить базу данных</button><p class="tiny muted" id="ver"></p><button class="secondary" id="logout">Выйти из аккаунта</button></div>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button data-tab="chats" class="on">Чаты</button><button data-tab="contacts">Контакты</button><button data-tab="profile">Профиль</button>
+    </nav>
+  </aside>
+  <main class="chat">
+    <div class="empty" id="empty"><div class="logo-box lg"></div><p>Выберите чат, чтобы начать</p></div>
+    <section class="room" id="room" hidden>
+      <header class="room-head"><button class="back" id="back" aria-label="Назад">‹</button><div class="avatar" id="room-av"></div><div><div class="title" id="room-title"></div><div class="muted small" id="room-sub">KotakApp</div></div></header>
+      <div class="msgs" id="msgs"></div>
+      <div class="reply-bar" id="reply-bar" hidden><span id="reply-text"></span><button id="reply-x" aria-label="Отменить ответ">×</button></div>
+      <form class="composer" id="composer" autocomplete="off"><textarea id="text" name="kotak-msg" rows="1" placeholder="Сообщение" autocomplete="off" maxlength="5000" enterkeyhint="send" data-lpignore="true" data-form-type="other"></textarea><div class="recbar" id="recbar" hidden><button type="button" id="rec-cancel" aria-label="Отменить запись">✕</button><span class="recdot"></span><span id="rec-time">0:00</span></div><button type="button" class="mic" id="mic" aria-label="Записать голосовое"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button><button class="send" id="send-btn" aria-label="Отправить" hidden>↑</button></form>
+    </section>
+  </main>
+</div>
+<div class="sheet" id="group-sheet" hidden><div class="sheet-body gbody">
+  <h3>Новая группа</h3>
+  <input id="g-title" maxlength="60" placeholder="Название группы" autocomplete="off">
+  <input id="g-search" type="search" placeholder="Найти участника по username" autocomplete="off">
+  <div class="gsel" id="g-sel"></div>
+  <ul class="list" id="g-results"></ul>
+  <button type="button" class="primary" id="g-create">Создать группу</button>
+  <button type="button" id="g-cancel" class="muted">Отмена</button>
+</div></div>
+<div class="toast" id="toast" role="status"></div>
+<div class="sheet" id="sheet" hidden><div class="sheet-body"><div class="react-row" id="react-row"></div><button id="act-reply">Ответить</button><button id="act-edit">Изменить</button><button id="act-del-me">Удалить у меня</button><button id="act-del-all">Удалить у всех</button><button id="act-close" class="muted">Закрыть</button></div></div>
+<script>
+(function(){
+  var V='11', st={ok:{},err:[]};
+  addEventListener('error',function(e){ st.err.push(e.message||'error'); });
+  addEventListener('unhandledrejection',function(e){ st.err.push(String((e.reason&&e.reason.message)||e.reason)); });
+  function load(src,ms){ return new Promise(function(res){
+    var s=document.createElement('script'),done=false,t;
+    function fin(ok){ if(done) return; done=true; clearTimeout(t); res(ok); }
+    t=setTimeout(function(){ fin(false); },ms); s.async=false; s.onload=function(){ fin(true); }; s.onerror=function(){ fin(false); }; s.src=src; document.head.appendChild(s);
+  }); }
+  (async function(){
+    var cdn=[['jsdelivr','https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'],['unpkg','https://unpkg.com/@supabase/supabase-js@2']];
+    for(var i=0;i<cdn.length;i++){ if(window.supabase) break; st.ok[cdn[i][0]]=await load(cdn[i][1],8000); }
+    st.ok.config=await load('config.js?v='+V,10000);
+    st.ok.app=await load('app.js?v='+V,10000);
+  })();
+  setTimeout(function(){
+    var b=document.getElementById('boot'); if(!b||b.hidden) return;
+    var d=Object.keys(st.ok).map(function(k){ return k+': '+(st.ok[k]?'ok':'нет'); }).join(', ')+'; supabase: '+(window.supabase?'ok':'нет')+(st.err.length?'; ошибка: '+st.err[0]:'');
+    b.innerHTML='<div style="text-align:center;padding:24px;color:#aaa;font:14px/1.5 sans-serif">Не удалось запустить приложение.<br><small>'+d.replace(/</g,'&lt;')+'</small><br><br><button onclick="location.reload()" style="padding:12px 22px;border-radius:12px;background:#fff;color:#000;font-weight:600">Перезагрузить</button></div>';
+  },14000);
+})();
+</script>
+</body>
+</html>

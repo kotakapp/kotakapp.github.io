@@ -11,8 +11,8 @@ let hiddenIds = new Set(), editing = null;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const initials = value => (String(value || '?').trim()[0] || '?').toUpperCase();
 const avCls = v => 'c'+([...String(v||'?')].reduce((a,c)=>a+c.charCodeAt(0),0)%6);
-const avatar = (name,dot=false) => `<div class="avatar ${avCls(name)}">${esc(initials(name))}${dot?'<span class="dot"></span>':''}</div>`;
-const setAv = (id,name,extra='') => { const el=$(id); el.className=('avatar '+extra+' '+avCls(name)).replace(/\s+/g,' ').trim(); el.textContent=initials(name); };
+const avatar = (name,dot=false,url='') => url?`<div class="avatar photo" style="background-image:url('${esc(url)}')">${dot?'<span class="dot"></span>':''}</div>`:`<div class="avatar ${avCls(name)}">${esc(initials(name))}${dot?'<span class="dot"></span>':''}</div>`;
+const setAv = (id,name,extra='',url='') => { const el=$(id); el.className=('avatar '+extra+' '+(url?'photo':avCls(name))).replace(/\s+/g,' ').trim(); el.style.backgroundImage=url?`url("${url}")`:''; el.textContent=url?'':initials(name); };
 const time = value => new Date(value).toLocaleTimeString('ru', {hour:'2-digit', minute:'2-digit'});
 function toast(message) { const el=$('toast'); el.textContent=message; el.classList.add('show'); clearTimeout(window.toastTimer); window.toastTimer=setTimeout(()=>el.classList.remove('show'),7000); }
 window.addEventListener('unhandledrejection',e=>toast('Ошибка: '+(e.reason?.message||e.reason)));
@@ -67,7 +67,7 @@ async function loadSession() {
   }
   me={...profile,id:user.id};
   $('auth-wrap').hidden=true; $('app').hidden=false;
-  setAv('me-av',me.display_name||me.username,'big');
+  paintMe();
   $('me-name').textContent=me.display_name||me.username;
   $('me-user').textContent='@'+me.username;
   await loadHidden();
@@ -123,6 +123,7 @@ function updateRoomStatus(){
   else if(online.has(c.otherId)){ text='в сети'; live=true; }
   else text='не в сети';
   $('room-sub').textContent=text; $('room-sub').classList.toggle('live',live);
+  $('card-status').textContent=text; $('card-status').classList.toggle('live',live);
 }
 function stopTyping(){ clearTimeout(typingTimer); if(typingSent&&pres){ typingSent=false; pres.track({typing_in:null}); } }
 function noteTyping(){
@@ -141,7 +142,7 @@ async function loadChats() {
   if(error) throw error;
   const ids=(members||[]).map(x=>x.conversation_id);
   if(!ids.length) { chats=[]; renderChats(); return; }
-  const {data:allMembers,error:memberError}=await client.from('conversation_members').select('conversation_id,user_id,last_read_at,last_delivered_at,profiles(username,display_name)').in('conversation_id',ids);
+  const {data:allMembers,error:memberError}=await client.from('conversation_members').select('conversation_id,user_id,last_read_at,last_delivered_at,profiles(username,display_name,avatar_url)').in('conversation_id',ids);
   if(memberError) throw memberError;
   const {data:lm,error:msgError}=await client.from('messages').select('id,conversation_id,sender_id,content,created_at,message_type,deleted_at').in('conversation_id',ids).order('created_at',{ascending:false});
   if(msgError) throw msgError;
@@ -150,7 +151,7 @@ async function loadChats() {
     const c=row.conversations; const participants=(allMembers||[]).filter(x=>x.conversation_id===c.id);
     const other=participants.find(x=>x.user_id!==me.id)?.profiles;
     const title=c.type==='group'?(c.title||'Группа'):(other?.display_name||other?.username||'Новый чат');
-    return {id:c.id,type:c.type,title,otherId:participants.find(x=>x.user_id!==me.id)?.user_id,otherUsername:other?.username,participants,incoming:(lastMessages||[]).filter(m=>m.conversation_id===c.id&&m.sender_id!==me.id).map(m=>m.created_at),last:(lastMessages||[]).find(m=>m.conversation_id===c.id)||null};
+    return {id:c.id,type:c.type,title,otherId:participants.find(x=>x.user_id!==me.id)?.user_id,otherUsername:other?.username,otherAvatar:other?.avatar_url||'',participants,incoming:(lastMessages||[]).filter(m=>m.conversation_id===c.id&&m.sender_id!==me.id).map(m=>m.created_at),last:(lastMessages||[]).find(m=>m.conversation_id===c.id)||null};
   }).sort((a,b)=>new Date(b.last?.created_at||0)-new Date(a.last?.created_at||0));
   renderChats();
 }
@@ -195,15 +196,15 @@ function renderChats() {
     const n=unreadOf(c), typing=isTyping(c), mineLast=!!c.last&&c.last.sender_id===me.id&&!c.last.deleted_at;
     const prev=typing?'печатает…':c.last?(c.last.deleted_at?'🚫 Сообщение удалено':c.last.message_type==='voice'?'🎤 Голосовое':esc(c.last.content||'Вложение')):'Сообщений пока нет';
     const tk=mineLast?`<span class="tick ${tickFor(c,c.last.created_at)}">${tickSvg(tickFor(c,c.last.created_at))}</span>`:'';
-    return `<li><button class="item ${current?.id===c.id?'on':''}" data-chat="${c.id}">${avatar(c.title,c.type==='direct'&&online.has(c.otherId))}<div class="meta"><div class="row"><span class="name">${esc(c.title)}</span><span class="when ${n?'new':''}">${tk}${c.last?time(c.last.created_at):''}</span></div><div class="row2"><div class="last ${typing?'typing':''}">${prev}</div>${badge(c)}</div></div></button></li>`;
+    return `<li><button class="item ${current?.id===c.id?'on':''}" data-chat="${c.id}">${avatar(c.title,c.type==='direct'&&online.has(c.otherId),c.type==='direct'?c.otherAvatar:'')}<div class="meta"><div class="row"><span class="name">${esc(c.title)}</span><span class="when ${n?'new':''}">${tk}${c.last?time(c.last.created_at):''}</span></div><div class="row2"><div class="last ${typing?'typing':''}">${prev}</div>${badge(c)}</div></div></button></li>`;
   }).join('')||`<li class="muted" style="padding:20px">${unreadOnly?'Непрочитанных чатов нет.':'Чатов пока нет. Найди друзей во вкладке «Контакты».'}</li>`;
 }
 async function searchUsers() {
   const q=$('user-search').value.trim().toLowerCase();
   if(q.length<2) { $('contact-list').innerHTML='<li class="muted" style="padding:20px">Введи минимум 2 символа username.</li>'; return; }
-  const {data,error}=await client.from('profiles').select('id,username,display_name').ilike('username',`%${q}%`).neq('id',me.id).limit(20);
+  const {data,error}=await client.from('profiles').select('id,username,display_name,avatar_url').ilike('username',`%${q}%`).neq('id',me.id).limit(20);
   if(error) { toast(error.message); return; }
-  $('contact-list').innerHTML=(data||[]).map(u=>`<li><button class="item" data-user="${u.id}">${avatar(u.display_name||u.username)}<div class="meta"><div class="name">${esc(u.display_name||u.username)}</div><div class="last">@${esc(u.username)}</div></div></button></li>`).join('')||'<li class="muted" style="padding:20px">Пользователи не найдены.</li>';
+  $('contact-list').innerHTML=(data||[]).map(u=>`<li><button class="item" data-user="${u.id}">${avatar(u.display_name||u.username,false,u.avatar_url)}<div class="meta"><div class="name">${esc(u.display_name||u.username)}</div><div class="last">@${esc(u.username)}</div></div></button></li>`).join('')||'<li class="muted" style="padding:20px">Пользователи не найдены.</li>';
 }
 async function startDirectChat(userId, title) {
   try {
@@ -218,7 +219,7 @@ async function startDirectChat(userId, title) {
 }
 async function openChat(chat) {
   cancelEdit(); current=chat; replyTo=null; $('reply-bar').hidden=true; $('room').hidden=false; $('empty').hidden=true;
-  setAv('room-av',chat.title); $('room-title').textContent=chat.title;
+  setAv('room-av',chat.title,'',chat.otherAvatar); $('card').hidden=true; $('room-title').textContent=chat.title;
   $('room-sub').textContent=chat.type==='group'?'Группа':'KotakApp'; $('app').dataset.view='room';
   updateRoomStatus();
   if(!roomPushed){ history.pushState({room:1},''); roomPushed=true; }
@@ -388,9 +389,9 @@ async function toggleVoice(btn){
   }catch(e){ btn.textContent='▶'; voiceBtn=null; voiceAudio=null; toast('Не удалось воспроизвести: '+(e.message||e)); }
 }
 
-let roomPushed=false;
-function closeRoom(){ cancelEdit(); stopTyping(); stopRecording(false); stopVoice(); $('app').dataset.view='list'; current=null; replyTo=null; $('reply-bar').hidden=true; $('room').hidden=true; $('empty').hidden=false; renderChats(); }
-window.addEventListener('popstate',()=>{ roomPushed=false; if($('app').dataset.view==='room') closeRoom(); });
+let roomPushed=false, cardPushed=false;
+function closeRoom(){ $('card').hidden=true; cardPushed=false; cancelEdit(); stopTyping(); stopRecording(false); stopVoice(); $('app').dataset.view='list'; current=null; replyTo=null; $('reply-bar').hidden=true; $('room').hidden=true; $('empty').hidden=false; renderChats(); }
+window.addEventListener('popstate',()=>{ if(!$('card').hidden){ $('card').hidden=true; cardPushed=false; return; } roomPushed=false; if($('app').dataset.view==='room') closeRoom(); });
 function setTab(tab) {
   for(const name of ['chats','contacts','settings','profile']) $('pane-'+name).hidden=name!==tab;
   $('side').dataset.tab=tab;
@@ -471,9 +472,9 @@ function renderGroupSel(){ $('g-sel').innerHTML=[...gSel].map(([id,n])=>`<button
 async function searchGroupUsers(){
   const q=$('g-search').value.trim().toLowerCase();
   if(q.length<2){ $('g-results').innerHTML=''; return; }
-  const {data,error}=await client.from('profiles').select('id,username,display_name').ilike('username',`%${q}%`).neq('id',me.id).limit(15);
+  const {data,error}=await client.from('profiles').select('id,username,display_name,avatar_url').ilike('username',`%${q}%`).neq('id',me.id).limit(15);
   if(error){ toast(error.message); return; }
-  $('g-results').innerHTML=(data||[]).map(u=>{ const n=u.display_name||u.username; return `<li><button type="button" class="item ${gSel.has(u.id)?'on':''}" data-gid="${esc(u.id)}" data-name="${esc(n)}">${avatar(n)}<div class="meta"><div class="name">${esc(n)}</div><div class="last">@${esc(u.username)}</div></div></button></li>`; }).join('')||'<li class="muted" style="padding:14px">Не найдено.</li>';
+  $('g-results').innerHTML=(data||[]).map(u=>{ const n=u.display_name||u.username; return `<li><button type="button" class="item ${gSel.has(u.id)?'on':''}" data-gid="${esc(u.id)}" data-name="${esc(n)}">${avatar(n,false,u.avatar_url)}<div class="meta"><div class="name">${esc(n)}</div><div class="last">@${esc(u.username)}</div></div></button></li>`; }).join('')||'<li class="muted" style="padding:14px">Не найдено.</li>';
 }
 async function createGroup(){
   const title=$('g-title').value.trim();
@@ -496,6 +497,87 @@ $('g-search').oninput=()=>{ clearTimeout(window.gTimer); window.gTimer=setTimeou
 $('g-results').onclick=e=>{ const b=e.target.closest('[data-gid]'); if(!b) return; const id=b.dataset.gid; if(gSel.has(id)) gSel.delete(id); else gSel.set(id,b.dataset.name); b.classList.toggle('on',gSel.has(id)); renderGroupSel(); };
 $('g-sel').onclick=e=>{ const b=e.target.closest('[data-id]'); if(!b) return; gSel.delete(b.dataset.id); renderGroupSel(); searchGroupUsers(); };
 $('g-create').onclick=createGroup;
+
+
+/* ---- аватар: свой профиль ---- */
+function paintMe(){
+  const n=me.display_name||me.username; setAv('me-av',n,'big',me.avatar_url||'');
+  $('av-remove').hidden=!me.avatar_url; $('av-change').textContent=me.avatar_url?'Сменить фото':'Добавить фото';
+}
+async function squareJpeg(file,size=512){
+  const bmp=await createImageBitmap(file); const s=Math.min(bmp.width,bmp.height);
+  const c=document.createElement('canvas'); c.width=c.height=size;
+  c.getContext('2d').drawImage(bmp,(bmp.width-s)/2,(bmp.height-s)/2,s,s,0,0,size,size);
+  return new Promise((res,rej)=>c.toBlob(b=>b?res(b):rej(new Error('Не удалось обработать фото')),'image/jpeg',.85));
+}
+const avPath=url=>{ const i=String(url||'').indexOf('/avatars/'); return i<0?null:decodeURIComponent(url.slice(i+9).split('?')[0]); };
+async function setAvatar(file){
+  if(!file||!me) return;
+  try{
+    toast('Загружаю фото…');
+    const blob=await squareJpeg(file);
+    const path=`${me.id}/avatar-${Date.now()}.jpg`;
+    const up=await client.storage.from('avatars').upload(path,blob,{contentType:'image/jpeg',cacheControl:'31536000'});
+    if(up.error) throw up.error;
+    const url=client.storage.from('avatars').getPublicUrl(path).data.publicUrl;
+    const {error}=await client.from('profiles').update({avatar_url:url}).eq('id',me.id);
+    if(error) throw error;
+    const old=avPath(me.avatar_url); me.avatar_url=url; paintMe();
+    if(old) client.storage.from('avatars').remove([old]).catch(()=>{});
+    toast('Фото обновлено');
+  }catch(e){ toast('Фото: '+(e.message||e)); }
+}
+async function removeAvatar(){
+  if(!me?.avatar_url) return;
+  try{
+    const {error}=await client.from('profiles').update({avatar_url:null}).eq('id',me.id); if(error) throw error;
+    const old=avPath(me.avatar_url); me.avatar_url=null; paintMe();
+    if(old) client.storage.from('avatars').remove([old]).catch(()=>{});
+    toast('Фото удалено');
+  }catch(e){ toast('Фото: '+(e.message||e)); }
+}
+$('av-change').onclick=()=>$('av-file').click();
+$('me-av').onclick=()=>$('av-file').click();
+$('av-file').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; setAvatar(f); };
+$('av-remove').onclick=removeAvatar;
+
+/* ---- карточка контакта ---- */
+let cardTab='media';
+function openCard(){
+  if(!current) return; $('card').hidden=false; cardTab='media'; renderCard();
+  if(!cardPushed){ history.pushState({card:1},''); cardPushed=true; }
+}
+function closeCardUI(){ if(cardPushed) history.back(); else $('card').hidden=true; }
+function renderCard(){
+  const c=currentChat(); if(!c) return; const g=c.type==='group';
+  setAv('card-av',c.title,'huge',g?'':(c.otherAvatar||''));
+  $('card-name').textContent=c.title; updateRoomStatus();
+  const people=(c.participants||[]).filter(x=>x.user_id!==me.id);
+  $('card-info').innerHTML=g
+    ? `<div class="irow"><small>Участники · ${(c.participants||[]).length}</small></div>`+(c.participants||[]).map(x=>{ const p=x.profiles||{}; const n=x.user_id===me.id?'Вы':(p.display_name||p.username||'Участник'); return `<div class="mrow">${avatar(n,false,p.avatar_url)}<div><div>${esc(n)}</div><small>@${esc(p.username||'')}</small></div></div>`; }).join('')
+    : `<div class="irow"><div>@${esc(c.otherUsername||people[0]?.profiles?.username||'')}</div><small>Имя пользователя</small></div>`;
+  document.querySelectorAll('#card-seg button').forEach(b=>b.classList.toggle('on',b.dataset.s===cardTab));
+  renderCardBody();
+}
+function renderCardBody(){
+  const list=[...msgMap.values()].filter(m=>!m.deleted_at&&!hiddenIds.has(m.id)).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+  const when=v=>new Date(v).toLocaleDateString('ru',{day:'numeric',month:'short'})+', '+time(v);
+  let html='';
+  if(cardTab==='media') html='<p class="cempty">Фото и видео пока нельзя отправлять. Они появятся здесь, когда мы добавим эту функцию.</p>';
+  else if(cardTab==='links'){
+    const seen=new Set(), out=[];
+    for(const m of list){ for(const u of (String(m.content||'').match(/https?:\/\/[^\s<>"']+/g)||[])){ if(!seen.has(u)){ seen.add(u); out.push([u,m.created_at]); } } }
+    html=out.map(([u,t])=>`<a class="lrow" href="${esc(u)}" target="_blank" rel="noopener noreferrer"><span>${esc(u)}</span><small>${when(t)}</small></a>`).join('')||'<p class="cempty">Ссылок в переписке пока нет.</p>';
+  } else {
+    html=list.filter(m=>m.message_type==='voice'&&m.media_path).map(m=>`<div class="vrow"><div class="vm"><button type="button" class="vplay" data-path="${esc(m.media_path)}" data-ms="${Number(m.media_duration_ms)||0}" aria-label="Воспроизвести">▶</button><div class="vbar"><i></i></div><span class="vdur">${fmtDur(m.media_duration_ms)}</span></div><small>${esc(nameOf(m.sender_id))} · ${when(m.created_at)}</small></div>`).join('')||'<p class="cempty">Голосовых сообщений пока нет.</p>';
+  }
+  $('card-body').innerHTML=html;
+}
+$('room-head').onclick=e=>{ if(e.target.closest('.back')) return; openCard(); };
+$('card-back').onclick=closeCardUI;
+$('card-seg').onclick=e=>{ const b=e.target.closest('[data-s]'); if(!b) return; cardTab=b.dataset.s; document.querySelectorAll('#card-seg button').forEach(x=>x.classList.toggle('on',x===b)); renderCardBody(); };
+$('card-body').onclick=e=>{ const pb=e.target.closest('.vplay'); if(pb) toggleVoice(pb); };
+$('card-actions').onclick=e=>{ const b=e.target.closest('[data-act]'); if(!b) return; if(b.dataset.act==='chat') closeCardUI(); else toast('Скоро будет'); };
 
 const pushSupported=()=>'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -522,7 +604,7 @@ async function togglePush(){
   }catch(e){ toast('Уведомления: '+(e.message||e)); }
 }
 $('push-btn').onclick=togglePush;
-const APP_VERSION='12';
+const APP_VERSION='13';
 $('ver').textContent='Версия приложения: '+APP_VERSION;
 async function runDiag(){
   const out=[]; const t=async(name,fn)=>{ try{ const r=await fn(); out.push((r&&r.error?'❌ ':'✅ ')+name+(r&&r.error?': '+r.error.message:'')); }catch(e){ out.push('❌ '+name+': '+(e.message||e)); } };

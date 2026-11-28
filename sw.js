@@ -1,4 +1,4 @@
-const C='kotak-v13',F=['index.html','styles.css','app.js','config.js','logo-mark.png','favicon.ico','icon-192.png'];
+const C='kotak-v14',F=['index.html','styles.css','app.js','config.js','logo-mark.png','favicon.ico','icon-192.png'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.addAll(F)))});
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==C).map(x=>caches.delete(x)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',e=>{

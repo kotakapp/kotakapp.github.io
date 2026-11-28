@@ -68,8 +68,6 @@ async function loadSession() {
   me={...profile,id:user.id};
   $('auth-wrap').hidden=true; $('app').hidden=false;
   paintMe();
-  $('me-name').textContent=me.display_name||me.username;
-  $('me-user').textContent='@'+me.username; $('bio-in').value=me.bio||'';
   await loadHidden();
   await loadChats();
   markDelivered();
@@ -191,23 +189,39 @@ function markDelivered(){
   if(!me||Date.now()-lastDel<2000) return; lastDel=Date.now();
   client.rpc('mark_delivered').then(({error})=>{ if(error) console.warn('mark delivered',error); });
 }
-let unreadOnly=false;
+let chatFilter='all';
 function renderChats() {
   const total=chats.reduce((s,c)=>s+unreadOf(c),0); document.title=total?`(${total}) KotakApp`:'KotakApp';
   const q=$('q').value.trim().toLowerCase();
-  $('chat-list').innerHTML=chats.filter(c=>c.title.toLowerCase().includes(q)&&(!unreadOnly||unreadOf(c)>0)).map(c=>{
+  $('chat-list').innerHTML=chats.filter(c=>c.title.toLowerCase().includes(q)&&(chatFilter==='all'||(chatFilter==='unread'?unreadOf(c)>0:c.type===chatFilter))).map(c=>{
     const n=unreadOf(c), typing=isTyping(c), mineLast=!!c.last&&c.last.sender_id===me.id&&!c.last.deleted_at;
     const prev=typing?'печатает…':c.last?(c.last.deleted_at?'🚫 Сообщение удалено':c.last.message_type==='voice'?'🎤 Голосовое':c.last.message_type==='image'?'📷 Фото':c.last.message_type==='video'?'🎬 Видео':esc(c.last.content||'Вложение')):'Сообщений пока нет';
     const tk=mineLast?`<span class="tick ${tickFor(c,c.last.created_at)}">${tickSvg(tickFor(c,c.last.created_at))}</span>`:'';
     return `<li><button class="item ${current?.id===c.id?'on':''}" data-chat="${c.id}">${avatar(c.title,c.type==='direct'&&online.has(c.otherId),c.type==='direct'?c.otherAvatar:'')}<div class="meta"><div class="row"><span class="name">${esc(c.title)}</span><span class="when ${n?'new':''}">${tk}${c.last?time(c.last.created_at):''}</span></div><div class="row2"><div class="last ${typing?'typing':''}">${prev}</div>${badge(c)}</div></div></button></li>`;
-  }).join('')||`<li class="muted" style="padding:20px">${unreadOnly?'Непрочитанных чатов нет.':'Чатов пока нет. Найди друзей во вкладке «Контакты».'}</li>`;
+  }).join('')||`<li class="muted" style="padding:20px">${chatFilter==='unread'?'Непрочитанных чатов нет.':chatFilter!=='all'&&chats.length?'В этом разделе чатов нет.':'Чатов пока нет. Найди друзей во вкладке «Контакты».'}</li>`;
+  $('cnt').textContent=chats.length; $('cnt').hidden=!chats.length;
+  renderContacts();
+}
+let contactHits=null;
+const userQuery=()=>$('user-search').value.trim().replace(/^@/,'').toLowerCase();
+function renderContacts(){
+  const q=userQuery(); let html;
+  if(q.length>=2){
+    html='<li class="sec">Результаты поиска</li>'+((contactHits||[]).map(u=>`<li><button class="item" data-user="${u.id}">${avatar(u.display_name||u.username,online.has(u.id),u.avatar_url)}<div class="meta"><div class="name">${esc(u.display_name||u.username)}</div><div class="last">@${esc(u.username)}</div></div><span class="go">Написать</span></button></li>`).join('')||'<li class="muted" style="padding:20px">Пользователи не найдены.</li>');
+  } else {
+    const seen=new Set();
+    const cs=chats.filter(c=>c.type==='direct'&&c.otherId&&!seen.has(c.otherId)&&seen.add(c.otherId)&&(!q||(c.title+' '+(c.otherUsername||'')).toLowerCase().includes(q)));
+    html='<li class="sec">Контакты</li>'+(cs.map(c=>{ const on=online.has(c.otherId); return `<li><button class="item" data-user="${c.otherId}">${avatar(c.title,on,c.otherAvatar)}<div class="meta"><div class="name">${esc(c.title)}</div><div class="st ${on?'on':''}"><i></i>${on?'В сети':'Не в сети'}</div></div></button></li>`; }).join('')||`<li class="muted" style="padding:20px">${q?'Среди контактов никого нет. Введи ещё символ, чтобы искать по всем пользователям.':'Контактов пока нет. Найди человека по @username и напиши ему.'}</li>`);
+  }
+  $('contact-list').innerHTML=html;
 }
 async function searchUsers() {
-  const q=$('user-search').value.trim().toLowerCase();
-  if(q.length<2) { $('contact-list').innerHTML='<li class="muted" style="padding:20px">Введи минимум 2 символа username.</li>'; return; }
+  const q=userQuery();
+  if(q.length<2) { contactHits=null; renderContacts(); return; }
   const {data,error}=await client.from('profiles').select('id,username,display_name,avatar_url').ilike('username',`%${q}%`).neq('id',me.id).limit(20);
+  if(q!==userQuery()) return;
   if(error) { toast(error.message); return; }
-  $('contact-list').innerHTML=(data||[]).map(u=>`<li><button class="item" data-user="${u.id}">${avatar(u.display_name||u.username,false,u.avatar_url)}<div class="meta"><div class="name">${esc(u.display_name||u.username)}</div><div class="last">@${esc(u.username)}</div></div></button></li>`).join('')||'<li class="muted" style="padding:20px">Пользователи не найдены.</li>';
+  contactHits=data||[]; renderContacts();
 }
 async function startDirectChat(userId, title) {
   try {
@@ -397,7 +411,7 @@ async function toggleVoice(btn){
 
 let roomPushed=false, cardPushed=false;
 function closeRoom(){ $('card').hidden=true; cardPushed=false; cancelEdit(); stopTyping(); stopRecording(false); stopVoice(); $('app').dataset.view='list'; current=null; replyTo=null; $('reply-bar').hidden=true; $('room').hidden=true; $('empty').hidden=false; renderChats(); }
-window.addEventListener('popstate',()=>{ if(!$('card').hidden){ $('card').hidden=true; cardPushed=false; return; } roomPushed=false; if($('app').dataset.view==='room') closeRoom(); });
+window.addEventListener('popstate',()=>{ if(pageDepth>0){ pageDepth--; const o=[...document.querySelectorAll('.page:not([hidden])')].pop(); if(o) o.hidden=true; return; } if(!$('card').hidden){ $('card').hidden=true; cardPushed=false; return; } roomPushed=false; if($('app').dataset.view==='room') closeRoom(); });
 function setTab(tab) {
   for(const name of ['chats','contacts','settings','profile']) $('pane-'+name).hidden=name!==tab;
   $('side').dataset.tab=tab;
@@ -417,13 +431,13 @@ $('mic').onclick=startRecording;
 $('rec-cancel').onclick=()=>stopRecording(false);
 $('text').addEventListener('input',()=>{ noteTyping(); syncBtns(); const t=$('text'); t.style.height='auto'; t.style.height=Math.min(t.scrollHeight,140)+'px'; });
 $('text').addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey&&!matchMedia('(pointer:coarse)').matches){ e.preventDefault(); $('composer').requestSubmit(); } });
-$('logout').onclick=logout;
 $('h-search').onclick=()=>{ setTab('chats'); $('q').focus(); };
 $('h-menu').onclick=e=>{ e.stopPropagation(); $('menu').hidden=!$('menu').hidden; };
 document.addEventListener('click',e=>{ if(!e.target.closest('#menu')) $('menu').hidden=true; });
 $('m-group').onclick=()=>{ $('menu').hidden=true; openGroup(); };
 $('m-settings').onclick=()=>{ $('menu').hidden=true; setTab('settings'); };
-$('q-filter').onclick=()=>{ unreadOnly=!unreadOnly; $('q-filter').setAttribute('aria-pressed',unreadOnly); renderChats(); };
+$('chips').onclick=e=>{ const b=e.target.closest('[data-f]'); if(!b) return; chatFilter=b.dataset.f; document.querySelectorAll('#chips button').forEach(x=>x.classList.toggle('on',x===b)); renderChats(); };
+$('add-contact').onclick=()=>$('user-search').focus();
 $('fab').onclick=()=>{ setTab('contacts'); $('user-search').focus(); };
 $('react-row').innerHTML=EMOJI.map(x=>`<button data-e="${x}">${x}</button>`).join('');
 $('msgs').onclick=e=>{
@@ -509,8 +523,11 @@ $('g-create').onclick=createGroup;
 
 /* ---- аватар: свой профиль ---- */
 function paintMe(){
-  const n=me.display_name||me.username; setAv('me-av',n,'big',me.avatar_url||'');
-  $('av-remove').hidden=!me.avatar_url; $('av-change').textContent=me.avatar_url?'Сменить фото':'Добавить фото';
+  const n=me.display_name||me.username, url=me.avatar_url||'';
+  setAv('me-av',n,'big',url); setAv('tab-av',n,'tav',url);
+  $('me-name').textContent=n; $('me-user').textContent='@'+me.username;
+  const b=$('me-bio'); b.textContent=me.bio||'Добавьте описание: Профиль → Изменить'; b.classList.toggle('empty',!me.bio);
+  $('av-view').hidden=!url; $('av-remove').hidden=!url; $('av-change').textContent=url?'Изменить фото':'Добавить фото';
 }
 async function squareJpeg(file,size=512){
   const bmp=await createImageBitmap(file); const s=Math.min(bmp.width,bmp.height);
@@ -544,17 +561,7 @@ async function removeAvatar(){
     toast('Фото удалено');
   }catch(e){ toast('Фото: '+(e.message||e)); }
 }
-$('av-change').onclick=()=>$('av-file').click();
-$('me-av').onclick=()=>$('av-file').click();
 $('av-file').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; setAvatar(f); };
-$('av-remove').onclick=removeAvatar;
-$('bio-save').onclick=async()=>{
-  const bio=$('bio-in').value.trim().slice(0,200);
-  const {error}=await client.from('profiles').update({bio:bio||null}).eq('id',me.id);
-  if(error) return toast('Описание: '+error.message);
-  me.bio=bio||null; $('bio-in').value=bio; toast('Описание сохранено');
-};
-
 /* ---- карточка контакта ---- */
 let cardTab='media';
 function openCard(){
@@ -815,9 +822,9 @@ const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
 const isStandalone=window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
 function keyToBytes(b64){const p='='.repeat((4-b64.length%4)%4);const r=atob((b64+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from([...r].map(c=>c.charCodeAt(0)));}
 async function updatePushBtn(){
-  const b=$('push-btn'); if(!pushSupported()){ b.textContent='Уведомления недоступны в этом браузере'; b.disabled=true; return; }
+  if(!pushSupported()){ pushAvail=false; pushOn=false; return renderPageIf(); }
   const reg=await navigator.serviceWorker.ready; const sub=await reg.pushManager.getSubscription();
-  b.textContent=sub?'Выключить уведомления':'Включить уведомления';
+  pushOn=!!sub; renderPageIf();
 }
 async function togglePush(){
   try{
@@ -834,9 +841,7 @@ async function togglePush(){
     toast('Уведомления включены'); updatePushBtn();
   }catch(e){ toast('Уведомления: '+(e.message||e)); }
 }
-$('push-btn').onclick=togglePush;
-const APP_VERSION='16';
-$('ver').textContent='Версия приложения: '+APP_VERSION;
+const APP_VERSION='17';
 async function runDiag(){
   const out=[]; const t=async(name,fn)=>{ try{ const r=await fn(); out.push((r&&r.error?'❌ ':'✅ ')+name+(r&&r.error?': '+r.error.message:'')); }catch(e){ out.push('❌ '+name+': '+(e.message||e)); } };
   await t('messages.reply_to_id',()=>client.from('messages').select('id,reply_to_id').limit(1));
@@ -845,7 +850,132 @@ async function runDiag(){
   await t('conversations.type/title',()=>client.from('conversations').select('id,type,title').limit(1));
   alert(out.join('\n')+'\n\nЕсли есть ❌ — выполни SQL из v9 в Supabase → SQL Editor ещё раз.');
 }
-$('diag').onclick=runDiag;
+
+/* ---- v17: страницы настроек, редактирование профиля, локальные предпочтения ---- */
+let pageDepth=0, pushOn=false, pushAvail=true, curPage=null, edUserOk=true, edTimer=null;
+const pref=(k,d)=>{ try{ const v=localStorage.getItem('kotak_'+k); return v===null?d:v; }catch(e){ return d; } };
+const setPref=(k,v)=>{ try{ localStorage.setItem('kotak_'+k,v); }catch(e){} };
+function applyPrefs(){
+  document.documentElement.style.setProperty('--msg-fs',({s:'14px',m:'16px',l:'18px'})[pref('fs','m')]||'16px');
+  document.body.classList.toggle('hide-time',pref('time','1')==='0');
+}
+applyPrefs();
+function openPage(el){ el.hidden=false; history.pushState({pg:1},''); pageDepth++; }
+const closePage=()=>{ if(pageDepth>0) history.back(); };
+const renderPageIf=()=>{ if(!$('spage').hidden) renderPage(); };
+const IC={
+  user:'<circle cx="12" cy="8" r="3.500"/><path d="M5 20c1-4 4-5.500 7-5.500s6 1.500 7 5.500"/>',
+  lock:'<rect x="5" y="11" width="14" height="9" rx="2.500"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  bell:'<path d="M6 17V11a6 6 0 0 1 12 0v6l1.500 2h-15zM10 21h4"/>',
+  chat:'<path d="M12 4C7.600 4 4 7 4 10.800c0 1.900.9 3.600 2.400 4.800-.1 1.400-.7 2.500-1.500 3.300 1.900-.1 3.400-.8 4.400-1.700.9.200 1.800.3 2.700.3 4.400 0 8-3 8-6.700S16.400 4 12 4z"/>',
+  db:'<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.700 3.100 3 7 3s7-1.300 7-3V6M5 12v6c0 1.700 3.100 3 7 3s7-1.300 7-3v-6"/>',
+  globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>',
+  info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+  help:'<circle cx="12" cy="12" r="9"/><path d="M9.500 9.500a2.500 2.500 0 1 1 3.500 2.300c-.7.400-1 .9-1 1.700M12 17h.01"/>',
+  out:'<path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M15 8l4 4-4 4M19 12H9"/>'
+};
+const ico=n=>`<svg viewBox="0 0 24 24">${IC[n]||''}</svg>`;
+const CHEV='<svg class="chev" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg>';
+const CHECK='<svg class="chev" style="color:var(--ac)" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></svg>';
+const SETTINGS=[
+  {id:'account',t:'Аккаунт',i:'user',rows:[{t:'Управление профилем',i:'user',go:'edit'},{t:'Выйти из аккаунта',i:'out',act:'logout',danger:1}]},
+  {id:'privacy',t:'Конфиденциальность',i:'lock',rows:[{t:'Видимость статуса',v:'Все',soon:1},{t:'Кто может писать',v:'Все',soon:1},{t:'Видимость профиля',v:'Все',soon:1},{t:'Чёрный список',soon:1},{t:'Блокировка пользователей',soon:1}]},
+  {id:'notif',t:'Уведомления',i:'bell',rows:[{t:'Новые сообщения',sw:1,act:'push'},{t:'Звук сообщений',sw:1,soon:1},{t:'Предпросмотр текста',sw:1,soon:1},{t:'Вибрация',sw:1,soon:1},{t:'Уведомления отдельных чатов',soon:1}]},
+  {id:'chats',t:'Настройки чатов',i:'chat',rows:[{t:'Размер текста',seg:1},{t:'Обои',soon:1},{t:'Тема',v:'Тёмная',soon:1},{t:'Автовоспроизведение видео',sw:1,soon:1},{t:'Автозагрузка медиа',sw:1,soon:1},{t:'Отображение времени сообщений',sw:1,act:'time'}]},
+  {id:'data',t:'Данные и память',i:'db',rows:[{t:'Управление файлами',soon:1}]},
+  {id:'lang',t:'Язык',i:'globe',rows:[{t:'Русский',chk:1},{t:'Қазақша',soon:1},{t:'English',soon:1}]},
+  {id:'about',t:'О приложении',i:'info',about:1,rows:[{t:'Поддержка',soon:1},{t:'Политика конфиденциальности',soon:1}]},
+  {id:'help',t:'Помощь',i:'help',rows:[{t:'Разработчик',soon:1},{t:'FAQ',soon:1},{t:'Сообщить об ошибке',soon:1},{t:'Предложить улучшение',soon:1},{t:'Проверить базу данных',act:'diag',chev:1}]}
+];
+const swOn=a=>a==='push'?pushOn:a==='time'?pref('time','1')!=='0':false;
+function rowHtml(r){
+  if(r.seg){ const f=pref('fs','m'); return `<div class="srow"><span class="tx">${r.t}</span><span class="segs">${[['s','Мелкий'],['m','Обычный'],['l','Крупный']].map(([k,n])=>`<button type="button" data-fs="${k}" class="${f===k?'on':''}">${n}</button>`).join('')}</span></div>`; }
+  const ic=r.i?`<span class="ic">${ico(r.i)}</span>`:'';
+  let right='';
+  if(r.soon) right=(r.v?`<span class="val">${r.v}</span>`:'')+'<span class="pill">Скоро</span>'+(r.sw?'<span class="sw"></span>':'');
+  else if(r.act==='push'&&!pushAvail) right='<span class="val">Недоступно</span>';
+  else if(r.sw) right=`<span class="sw ${swOn(r.act)?'on':''}"></span>`;
+  else if(r.chk) right=CHECK;
+  else if(r.go||r.chev) right=CHEV;
+  return `<button type="button" class="srow ${r.soon?'soon':''} ${r.danger?'danger':''}" data-act="${r.act||''}" data-go="${r.go||''}" ${r.soon?'data-soon="1"':''}>${ic}<span class="tx">${r.t}</span>${right}</button>`;
+}
+function renderPage(){
+  const s=SETTINGS.find(x=>x.id===curPage); if(!s) return;
+  const head=s.about?`<div class="abt"><img src="logo-mark.png" alt="" width="90" height="87"><b>Kotak<span style="color:var(--pr)">App</span></b><span class="muted">Версия ${APP_VERSION}</span></div>`:'';
+  $('sp-body').innerHTML=head+'<div class="card2">'+s.rows.map(rowHtml).join('')+'</div>';
+}
+function openSettings(id){
+  const s=SETTINGS.find(x=>x.id===id); if(!s) return;
+  curPage=id; $('sp-title').textContent=s.t; renderPage(); if($('spage').hidden) openPage($('spage'));
+}
+$('settings-main').innerHTML='<div class="card2">'+SETTINGS.map(s=>`<button type="button" class="srow" data-open="${s.id}"><span class="ic">${ico(s.i)}</span><span class="tx">${s.t}</span>${s.id==='lang'?'<span class="val">Русский</span>':''}${CHEV}</button>`).join('')+'</div>';
+$('settings-main').onclick=e=>{ const b=e.target.closest('[data-open]'); if(b) openSettings(b.dataset.open); };
+$('sp-body').onclick=async e=>{
+  const fs=e.target.closest('[data-fs]'); if(fs){ setPref('fs',fs.dataset.fs); applyPrefs(); return renderPage(); }
+  const b=e.target.closest('.srow'); if(!b) return;
+  if(b.dataset.soon) return toast('Эта функция скоро появится');
+  const a=b.dataset.act;
+  if(b.dataset.go==='edit') return openEdit();
+  if(a==='logout'){ if(!confirm('Выйти из аккаунта?')) return; document.querySelectorAll('.page').forEach(p=>p.hidden=true); pageDepth=0; return logout(); }
+  if(a==='push'){ if(!pushAvail) return toast('Уведомления недоступны в этом браузере'); return togglePush(); }
+  if(a==='time'){ setPref('time',pref('time','1')==='0'?'1':'0'); applyPrefs(); return renderPage(); }
+  if(a==='diag') return runDiag();
+};
+$('sp-back').onclick=closePage; $('ep-back').onclick=closePage;
+
+/* профиль */
+const setHint=(t,c)=>{ const h=$('ed-hint'); h.textContent=t; h.className='hint '+(c||''); };
+function openEdit(){
+  $('ed-name').value=me.display_name||''; $('ed-user').value=me.username; $('ed-bio').value=me.bio||'';
+  edUserOk=true; setHint(''); openPage($('epage'));
+}
+function checkUsername(){
+  const v=$('ed-user').value.trim().toLowerCase(); clearTimeout(edTimer);
+  if(v===me.username){ edUserOk=true; return setHint(''); }
+  edUserOk=false;
+  if(!validUsername(v)) return setHint('3–24 символа: a–z, 0–9 и _','bad');
+  setHint('Проверяю…');
+  edTimer=setTimeout(async()=>{
+    const {data,error}=await client.from('profiles').select('id').eq('username',v).neq('id',me.id).maybeSingle();
+    if($('ed-user').value.trim().toLowerCase()!==v) return;
+    if(error) return setHint('Не удалось проверить: '+error.message,'bad');
+    edUserOk=!data; setHint(data?'@'+v+' уже занят':'@'+v+' свободен',data?'bad':'ok');
+  },400);
+}
+async function saveProfileEdit(){
+  const uname=$('ed-user').value.trim().toLowerCase(), name=$('ed-name').value.trim().slice(0,40), bio=$('ed-bio').value.trim().slice(0,200);
+  const changedU=uname!==me.username;
+  if(changedU&&!edUserOk) return toast('Проверь username');
+  $('ed-save').disabled=true;
+  try{
+    if(changedU){
+      // вход идёт по username → email, поэтому сначала меняем email входа; если сервер не применил — ничего не трогаем
+      const {data,error}=await client.auth.updateUser({email:usernameEmail(uname)});
+      if(error) throw error;
+      if((data?.user?.email||'').toLowerCase()!==usernameEmail(uname)) throw new Error('смена username пока недоступна (сервер требует подтверждение email)');
+    }
+    const upd={display_name:name||uname,bio:bio||null}; if(changedU) upd.username=uname;
+    const {error}=await client.from('profiles').update(upd).eq('id',me.id);
+    if(error){ if(changedU) await client.auth.updateUser({email:usernameEmail(me.username)}).catch(()=>{}); throw error; }
+    Object.assign(me,upd); paintMe(); loadChats().catch(()=>{}); toast('Профиль сохранён'); closePage();
+  }catch(e){ toast('Профиль: '+(e.message||e)); }
+  finally{ $('ed-save').disabled=false; }
+}
+$('ed-user').oninput=checkUsername; $('ed-save').onclick=saveProfileEdit; $('p-edit').onclick=openEdit;
+$('pav').onclick=()=>{ $('av-sheet').hidden=false; };
+$('av-change').onclick=()=>{ $('av-sheet').hidden=true; $('av-file').click(); };
+$('av-view').onclick=()=>{ $('av-sheet').hidden=true; if(!me?.avatar_url) return; $('lb-body').innerHTML=`<img src="${esc(me.avatar_url)}" alt="Фото профиля">`; $('lb').hidden=false; };
+$('av-remove').onclick=()=>{ $('av-sheet').hidden=true; removeAvatar(); };
+$('av-close').onclick=()=>{ $('av-sheet').hidden=true; };
+$('av-sheet').onclick=e=>{ if(e.target===$('av-sheet')) $('av-sheet').hidden=true; };
+$('ptabs').onclick=e=>{
+  const b=e.target.closest('[data-p]'); if(!b) return; const a=b.dataset.p==='arc';
+  document.querySelectorAll('#ptabs button').forEach(x=>x.classList.toggle('on',x===b));
+  $('pe-t').textContent=a?'Архив пуст':'Пока нет публикаций';
+  $('pe-s').textContent=a?'Здесь будут скрытые публикации':'Делитесь мыслями, фото и моментами с друзьями';
+  $('p-add').hidden=a;
+};
+$('p-add').onclick=()=>toast('Публикации скоро появятся');
 
 (async()=>{
   try {

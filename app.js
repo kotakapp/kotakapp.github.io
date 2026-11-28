@@ -75,6 +75,7 @@ async function loadSession() {
   markDelivered();
   startRealtime();
   startPresence();
+  startCalls();
   cleanupMedia();
 }
 
@@ -402,7 +403,7 @@ function setTab(tab) {
   $('side').dataset.tab=tab;
   document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab));
 }
-async function logout() { await stopRealtime(); await stopPresence(); await client.auth.signOut(); current=null; chats=[]; $('app').hidden=true; $('auth-wrap').hidden=false; setAuthMode('login'); }
+async function logout() { if(call) endCall('remote',true); await stopCalls(); await stopRealtime(); await stopPresence(); await client.auth.signOut(); current=null; chats=[]; $('app').hidden=true; $('auth-wrap').hidden=false; setAuthMode('login'); }
 $('auth-form').addEventListener('submit',authSubmit);
 $('auth-switch').onclick=()=>setAuthMode(authMode==='login'?'register':'login');
 $('tabs').onclick=e=>{const b=e.target.closest('button[data-tab]');if(b)setTab(b.dataset.tab);};
@@ -594,7 +595,7 @@ $('room-head').onclick=e=>{ if(e.target.closest('.back')) return; openCard(); };
 $('card-back').onclick=closeCardUI;
 $('card-seg').onclick=e=>{ const b=e.target.closest('[data-s]'); if(!b) return; cardTab=b.dataset.s; document.querySelectorAll('#card-seg button').forEach(x=>x.classList.toggle('on',x===b)); renderCardBody(); };
 $('card-body').onclick=e=>{ const pb=e.target.closest('.vplay'); if(pb) toggleVoice(pb); const t=e.target.closest('.mthumb'); if(t) openLightbox(t.dataset.kind,t.dataset.path); };
-$('card-actions').onclick=e=>{ const b=e.target.closest('[data-act]'); if(!b) return; if(b.dataset.act==='chat') closeCardUI(); else toast('Скоро будет'); };
+$('card-actions').onclick=e=>{ const b=e.target.closest('[data-act]'); if(!b) return; if(b.dataset.act==='chat') closeCardUI(); else if(b.dataset.act==='call') startCall('audio'); else if(b.dataset.act==='vid') startCall('video'); else toast('Скоро будет'); };
 
 
 /* ---- фото и видео ---- */
@@ -679,6 +680,136 @@ async function cleanupMedia(){
   }catch(e){ console.warn('cleanup',e); }
 }
 
+
+/* ---- звонки (WebRTC, сигналы через Supabase Realtime) ---- */
+let call=null, callIn=null; const callOut=new Map();
+function startCalls(){
+  if(callIn||!me) return;
+  callIn=client.channel('call-'+me.id,{config:{broadcast:{self:false}}}).on('broadcast',{event:'sig'},({payload})=>onSignal(payload)).subscribe();
+}
+async function stopCalls(){
+  if(callIn){ await client.removeChannel(callIn); callIn=null; }
+  for(const ch of callOut.values()) client.removeChannel(ch); callOut.clear();
+}
+async function sendSig(toId,payload){
+  let ch=callOut.get(toId);
+  if(!ch){
+    ch=client.channel('call-'+toId,{config:{broadcast:{self:false}}}); callOut.set(toId,ch);
+    await new Promise(res=>{ const t=setTimeout(res,5000); ch.subscribe(st=>{ if(st==='SUBSCRIBED'){ clearTimeout(t); res(); } }); });
+  }
+  try{ await ch.send({type:'broadcast',event:'sig',payload:{...payload,from:me.id}}); }catch(e){ console.warn('sig',e); }
+}
+let ringCtx=null, ringT=null;
+function tone(on){
+  clearInterval(ringT); ringT=null; if(!on) return;
+  try{
+    ringCtx=ringCtx||new (window.AudioContext||window.webkitAudioContext)();
+    const beep=()=>{ if(!call) return; const o=ringCtx.createOscillator(), g=ringCtx.createGain(); o.frequency.value=call.role==='in'?880:440; g.gain.value=.07; o.connect(g); g.connect(ringCtx.destination); o.start(); o.stop(ringCtx.currentTime+.35); if(call.role==='in'&&navigator.vibrate) navigator.vibrate(300); };
+    beep(); ringT=setInterval(beep,1600);
+  }catch(e){}
+}
+const callStatus=t=>{ $('call-status').textContent=t; };
+function showCall(){
+  const el=$('call'); el.hidden=false; el.classList.remove('hasv');
+  setAv('call-av',call.name,'huge',call.avatar||''); $('call-name').textContent=call.name;
+  renderCallBtns();
+}
+function renderCallBtns(){
+  const inc=call&&call.role==='in'&&call.state==='ringing';
+  $('c-acc').hidden=!inc; $('c-mic').hidden=inc; $('c-cam').hidden=inc||call.kind!=='video';
+  $('call').classList.toggle('video',call.kind==='video');
+}
+function sendIce(c){ if(!call) return; if(call.ready) sendSig(call.peerId,{type:'ice',cid:call.id,cand:c}); else call.q.push(c); }
+function flushIce(){ if(!call) return; call.ready=true; call.q.splice(0).forEach(c=>sendSig(call.peerId,{type:'ice',cid:call.id,cand:c})); }
+async function setupMedia(){
+  try{
+    call.local=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:call.kind==='video'?{facingMode:'user',width:{ideal:640},height:{ideal:480}}:false});
+  }catch(e){ throw new Error('Нет доступа к микрофону'+(call.kind==='video'?' или камере':'')+'. Разреши его для сайта в настройках браузера.'); }
+  $('call-local').srcObject=call.local;
+  try{ call.wake=await navigator.wakeLock?.request('screen'); }catch(e){}
+}
+function makePc(){
+  const pc=new RTCPeerConnection({iceServers:cfg.ICE_SERVERS||[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']}]});
+  call.pc=pc; call.local.getTracks().forEach(t=>pc.addTrack(t,call.local));
+  pc.onicecandidate=e=>{ if(e.candidate) sendIce(e.candidate.toJSON()); };
+  pc.ontrack=e=>{ const v=$('call-remote'); v.srcObject=e.streams[0]; v.play?.().catch(()=>{}); if(call?.kind==='video') $('call').classList.add('hasv'); };
+  pc.onconnectionstatechange=()=>{
+    if(!call||call.pc!==pc) return; const st=pc.connectionState;
+    if(st==='connected'){ clearTimeout(call.dropT); onConnected(); }
+    else if(st==='failed') endCall('failed',true);
+    else if(st==='disconnected'){ clearTimeout(call.dropT); call.dropT=setTimeout(()=>{ if(call&&call.pc===pc&&pc.connectionState!=='connected') endCall('failed',true); },8000); }
+  };
+}
+function onConnected(){
+  if(!call||call.state==='connected') return; call.state='connected'; tone(false); clearTimeout(call.timeout); clearTimeout(call.ackTimer);
+  call.t0=Date.now(); call.tick=setInterval(()=>{ const s=Math.floor((Date.now()-call.t0)/1000); callStatus(Math.floor(s/60)+':'+String(s%60).padStart(2,'0')); },500); callStatus('0:00');
+}
+async function startCall(kind){
+  const c=currentChat(); if(!c) return;
+  if(c.type!=='direct'||!c.otherId) return toast('Звонки пока доступны только в личных чатах');
+  if(call) return toast('Звонок уже идёт');
+  if(!window.RTCPeerConnection||!navigator.mediaDevices?.getUserMedia) return toast('Звонки не поддерживаются в этом браузере');
+  call={id:crypto.randomUUID(),peerId:c.otherId,kind,role:'out',name:c.title,avatar:c.otherAvatar||'',q:[],buf:[],state:'calling'};
+  showCall(); callStatus('Соединяю…');
+  try{
+    await setupMedia(); makePc();
+    const offer=await call.pc.createOffer(); await call.pc.setLocalDescription(offer);
+    await sendSig(call.peerId,{type:'invite',cid:call.id,kind,sdp:{type:offer.type,sdp:offer.sdp},name:me.display_name||me.username,avatar:me.avatar_url||''});
+    flushIce();
+    const id=call.id;
+    call.ackTimer=setTimeout(()=>{ if(call&&call.id===id&&!call.ack) endCall('unreach',true); },10000);
+    call.timeout=setTimeout(()=>{ if(call&&call.id===id&&call.state!=='connected') endCall('noanswer',true); },50000);
+  }catch(e){ endCall('error',false,e); }
+}
+async function acceptCall(){
+  if(!call||call.role!=='in'||call.state!=='ringing') return;
+  clearTimeout(call.timeout); tone(false); call.state='connecting'; callStatus('Соединяю…'); renderCallBtns(); closeCallNote();
+  try{
+    await setupMedia(); makePc();
+    await call.pc.setRemoteDescription(call.offer);
+    for(const c of call.buf.splice(0)) await call.pc.addIceCandidate(c).catch(()=>{});
+    const ans=await call.pc.createAnswer(); await call.pc.setLocalDescription(ans);
+    await sendSig(call.peerId,{type:'accept',cid:call.id,sdp:{type:ans.type,sdp:ans.sdp}});
+    flushIce();
+    const id=call.id; call.timeout=setTimeout(()=>{ if(call&&call.id===id&&call.state!=='connected') endCall('failed',true); },25000);
+  }catch(e){ endCall('error',true,e); }
+}
+function closeCallNote(){ navigator.serviceWorker?.ready.then(r=>r.getNotifications({tag:'kotak-call'}).then(l=>l.forEach(n=>n.close()))).catch(()=>{}); }
+async function onSignal(p){
+  if(!p||!me) return;
+  if(p.type==='invite'){
+    if(call){ sendSig(p.from,{type:'busy',cid:p.cid}); return; }
+    call={id:p.cid,peerId:p.from,kind:p.kind==='video'?'video':'audio',role:'in',name:p.name||'Звонок',avatar:p.avatar||'',offer:p.sdp,q:[],buf:[],state:'ringing'};
+    showCall(); callStatus(call.kind==='video'?'Входящий видеозвонок':'Входящий звонок'); tone(true);
+    sendSig(p.from,{type:'ringing',cid:p.cid});
+    const id=call.id; call.timeout=setTimeout(()=>{ if(call&&call.id===id&&call.state==='ringing') endCall('missed',true); },45000);
+    if(document.hidden&&'Notification' in window&&Notification.permission==='granted') navigator.serviceWorker?.ready.then(r=>r.showNotification('Входящий звонок',{body:call?.name||'',tag:'kotak-call',icon:'icon-192.png',requireInteraction:true})).catch(()=>{});
+    return;
+  }
+  if(!call||p.cid!==call.id) return;
+  if(p.type==='ringing'){ call.ack=true; clearTimeout(call.ackTimer); callStatus('Вызов…'); tone(true); }
+  else if(p.type==='accept'&&call.role==='out'&&call.state==='calling'){
+    call.state='connecting'; tone(false); callStatus('Соединяю…');
+    try{ await call.pc.setRemoteDescription(p.sdp); for(const c of call.buf.splice(0)) await call.pc.addIceCandidate(c).catch(()=>{}); }catch(e){ endCall('error',true,e); }
+  }
+  else if(p.type==='ice'){ if(call.pc&&call.pc.remoteDescription) call.pc.addIceCandidate(p.cand).catch(()=>{}); else call.buf.push(p.cand); }
+  else if(p.type==='busy') endCall('busy',false);
+  else if(p.type==='end') endCall(p.reason==='declined'?'declined':p.reason==='missed'?'missed_in':'remote',false);
+}
+function endCall(reason,notify,err){
+  const c=call; if(!c) return; call=null;
+  if(notify) sendSig(c.peerId,{type:'end',cid:c.id,reason:reason==='declined'?'declined':reason==='missed'?'missed':'hangup'});
+  tone(false); clearTimeout(c.timeout); clearTimeout(c.ackTimer); clearTimeout(c.dropT); clearInterval(c.tick);
+  try{ c.pc?.close(); }catch(e){} c.local?.getTracks().forEach(t=>t.stop()); try{ c.wake?.release(); }catch(e){}
+  $('call-remote').srcObject=null; $('call-local').srcObject=null; $('call').hidden=true; $('c-mic').classList.remove('off'); $('c-cam').classList.remove('off'); closeCallNote();
+  const msg={remote:'Звонок завершён',declined:'Абонент отклонил звонок',busy:'Абонент занят',unreach:'Абонент недоступен: приложение у него закрыто',noanswer:'Нет ответа',missed:'Звонок пропущен',missed_in:'Звонок не был принят',failed:'Не удалось соединиться. Возможно, сеть не поддерживает прямое соединение.',error:err?(err.message||String(err)):'Ошибка звонка'}[reason];
+  if(msg) toast(msg);
+}
+$('c-end').onclick=()=>{ if(!call) return; endCall(call.role==='in'&&call.state==='ringing'?'declined':'hangup',true); };
+$('c-acc').onclick=acceptCall;
+$('c-mic').onclick=()=>{ const t=call?.local?.getAudioTracks()[0]; if(!t) return; t.enabled=!t.enabled; $('c-mic').classList.toggle('off',!t.enabled); };
+$('c-cam').onclick=()=>{ const t=call?.local?.getVideoTracks()[0]; if(!t) return; t.enabled=!t.enabled; $('c-cam').classList.toggle('off',!t.enabled); };
+
 const pushSupported=()=>'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
 const isStandalone=window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
@@ -704,7 +835,7 @@ async function togglePush(){
   }catch(e){ toast('Уведомления: '+(e.message||e)); }
 }
 $('push-btn').onclick=togglePush;
-const APP_VERSION='15';
+const APP_VERSION='16';
 $('ver').textContent='Версия приложения: '+APP_VERSION;
 async function runDiag(){
   const out=[]; const t=async(name,fn)=>{ try{ const r=await fn(); out.push((r&&r.error?'❌ ':'✅ ')+name+(r&&r.error?': '+r.error.message:'')); }catch(e){ out.push('❌ '+name+': '+(e.message||e)); } };

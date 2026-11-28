@@ -225,3 +225,19 @@ background:radial-gradient(900px 600px at 85% 110%,#168bff26,transparent 65%),ra
 .lb .round{position:absolute;top:calc(14px + env(safe-area-inset-top));right:14px;z-index:2}
 .lb-body{width:100%;height:100%;display:grid;place-items:center;padding:70px 8px 20px}
 .lb-body img,.lb-body video{max-width:100%;max-height:100%;border-radius:10px;box-shadow:0 0 60px #168bff44}
+
+/* calls */
+.call{position:fixed;inset:0;z-index:40;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:calc(70px + env(safe-area-inset-top)) 20px calc(36px + env(safe-area-inset-bottom));background:radial-gradient(800px 600px at 50% 0,#168bff38,transparent 65%),radial-gradient(600px 500px at 50% 110%,#00bfff22,transparent 65%),#050914;animation:in .2s ease-out}
+.c-remote{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;pointer-events:none;background:#000}
+.call.hasv .c-remote{opacity:1}
+.c-local{display:none;position:absolute;top:calc(14px + env(safe-area-inset-top));right:14px;width:104px;height:148px;object-fit:cover;border-radius:18px;transform:scaleX(-1);box-shadow:0 0 0 2px #168bff99,0 10px 30px #000a;z-index:2;background:#000}
+.call.video .c-local{display:block}
+.c-top{position:relative;z-index:1;text-align:center;display:flex;flex-direction:column;align-items:center;gap:6px;text-shadow:0 2px 14px #000a}
+.c-top h2{font:700 28px var(--f);margin-top:12px}.c-top p{color:#c9d6ee;font-size:17px;min-height:24px;font-variant-numeric:tabular-nums}
+.call.hasv .c-top .avatar{display:none}.call.hasv .c-top{align-self:flex-start;margin-top:-40px;align-items:flex-start;text-align:left}
+.c-ctrl{position:relative;z-index:1;display:flex;gap:22px;align-items:center;justify-content:center}
+.cbtn{width:66px;height:66px;border-radius:50%;display:grid;place-items:center;background:#10182acc;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:inset 0 0 0 1.2px var(--line2),0 0 20px #168bff22;transition:.2s}
+.cbtn svg{width:30px;height:30px}.cbtn:active{transform:scale(.92)}.cbtn.off{background:#fff;color:#050914}
+.cbtn.red{background:#e5304a;box-shadow:0 0 30px #e5304a88}.cbtn.red svg{transform:rotate(135deg)}
+.cbtn.green{background:#1fc760;box-shadow:0 0 30px #1fc76088}
+@media (min-width:761px){.call{padding-top:80px}}

@@ -1,0 +1,54 @@
+name: Android APK
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - name: Firebase config (опционально)
+        env: { GS: "${{ secrets.GOOGLE_SERVICES_JSON_B64 }}" }
+        run: if [ -n "$GS" ]; then echo "$GS" | base64 -d > google-services.json; fi
+      - run: npm install
+      - run: node build-web.js
+      - run: npx cap add android
+      - run: node patch-android.js
+      - run: npx cap sync android
+      - name: Debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+      - name: Release APK (если заданы секреты подписи)
+        env:
+          KS: ${{ secrets.KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KS" ]; then echo "нет KEYSTORE_B64 — только debug"; exit 0; fi
+          (cd android && ./gradlew assembleRelease)
+          echo "$KS" | base64 -d > release.jks
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          U=android/app/build/outputs/apk/release/app-release-unsigned.apk
+          $BT/zipalign -p -f 4 $U aligned.apk
+          $BT/apksigner sign --ks release.jks --ks-pass pass:$KS_PASS --ks-key-alias $KEY_ALIAS --key-pass pass:$KEY_PASS --out KotakApp-release.apk aligned.apk
+      - run: cp android/app/build/outputs/apk/debug/app-debug.apk KotakApp-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KotakApp-apk
+          path: |
+            KotakApp-debug.apk
+            KotakApp-release.apk
+          if-no-files-found: ignore
+      - name: GitHub Release (по тегу)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            KotakApp-debug.apk
+            KotakApp-release.apk

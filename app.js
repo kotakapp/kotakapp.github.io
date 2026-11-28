@@ -743,7 +743,9 @@ async function cleanupMedia(){
 
 
 /* ---- звонки (WebRTC, сигналы через Supabase Realtime) ---- */
-let call=null, callIn=null; const callOut=new Map();
+let call=null, callIn=null; const callOut=new Map(); const endedCalls=new Set(); let nativeCall=null;
+async function pushCall(type,extra){ try{ const {data}=await client.functions.invoke('super-service',{body:{type,...extra}}); return data?.sent||0; }catch(e){ return 0; } }
+function ackWatch(id){ if(!call||call.id!==id) return; call.ackTimer=setTimeout(()=>{ if(!call||call.id!==id||call.ack) return; if(call.pushed&&!call.late){ call.late=true; return ackWatch(id); } endCall('unreach',true); },call.pushed&&!call.late?10000:(call.late?22000:10000)); }
 function startCalls(){
   if(callIn||!me) return;
   callIn=client.channel('call-'+me.id,{config:{broadcast:{self:false}}}).on('broadcast',{event:'sig'},({payload})=>onSignal(payload)).subscribe();
@@ -815,10 +817,13 @@ async function startCall(kind){
   try{
     await setupMedia(); makePc();
     const offer=await call.pc.createOffer(); await call.pc.setLocalDescription(offer);
-    await sendSig(call.peerId,{type:'invite',cid:call.id,kind,sdp:{type:offer.type,sdp:offer.sdp},name:me.display_name||me.username,avatar:me.avatar_url||''});
+    const inv={type:'invite',cid:call.id,kind,sdp:{type:offer.type,sdp:offer.sdp},name:me.display_name||me.username,avatar:me.avatar_url||''};
+    await sendSig(call.peerId,inv);
     flushIce();
     const id=call.id;
-    call.ackTimer=setTimeout(()=>{ if(call&&call.id===id&&!call.ack) endCall('unreach',true); },10000);
+    pushCall('call',{to:call.peerId,cid:id,kind}).then(n=>{ if(call&&call.id===id&&n>0) call.pushed=true; });
+    const iv=setInterval(()=>{ if(!call||call.id!==id||call.ack||call.state!=='calling') return clearInterval(iv); sendSig(call.peerId,inv); },2500); call.reinv=iv;
+    ackWatch(id);
     call.timeout=setTimeout(()=>{ if(call&&call.id===id&&call.state!=='connected') endCall('noanswer',true); },50000);
   }catch(e){ endCall('error',false,e); }
 }
@@ -839,12 +844,14 @@ function closeCallNote(){ navigator.serviceWorker?.ready.then(r=>r.getNotificati
 async function onSignal(p){
   if(!p||!me) return;
   if(p.type==='invite'){
+    if(call&&call.id===p.cid) return; if(endedCalls.has(p.cid)) return;
     if(call){ sendSig(p.from,{type:'busy',cid:p.cid}); return; }
     call={id:p.cid,peerId:p.from,kind:p.kind==='video'?'video':'audio',role:'in',name:p.name||'Звонок',avatar:p.avatar||'',offer:p.sdp,q:[],buf:[],state:'ringing'};
     showCall(); callStatus(call.kind==='video'?'Входящий видеозвонок':'Входящий звонок'); tone(true);
     sendSig(p.from,{type:'ringing',cid:p.cid});
     const id=call.id; call.timeout=setTimeout(()=>{ if(call&&call.id===id&&call.state==='ringing') endCall('missed',true); },45000);
-    if(document.hidden&&'Notification' in window&&Notification.permission==='granted') navigator.serviceWorker?.ready.then(r=>r.showNotification('Входящий звонок',{body:call?.name||'',tag:'kotak-call',icon:'icon-192.png',requireInteraction:true})).catch(()=>{});
+    if(nativeCall&&nativeCall.cid===p.cid){ const nc=nativeCall; nativeCall=null; if(nc.action==='accept') setTimeout(acceptCall,50); else if(nc.action==='decline') endCall('declined',true); }
+    if(!IS_NATIVE&&document.hidden&&'Notification' in window&&Notification.permission==='granted') navigator.serviceWorker?.ready.then(r=>r.showNotification('Входящий звонок',{body:call?.name||'',tag:'kotak-call',icon:'icon-192.png',requireInteraction:true})).catch(()=>{});
     return;
   }
   if(!call||p.cid!==call.id) return;
@@ -858,7 +865,8 @@ async function onSignal(p){
   else if(p.type==='end') endCall(p.reason==='declined'?'declined':p.reason==='missed'?'missed_in':'remote',false);
 }
 function endCall(reason,notify,err){
-  const c=call; if(!c) return; call=null;
+  const c=call; if(!c) return; call=null; endedCalls.add(c.id); clearInterval(c.reinv);
+  if(c.role==='out'&&c.state==='calling') pushCall('call_end',{to:c.peerId,cid:c.id});
   if(notify) sendSig(c.peerId,{type:'end',cid:c.id,reason:reason==='declined'?'declined':reason==='missed'?'missed':'hangup'});
   tone(false); clearTimeout(c.timeout); clearTimeout(c.ackTimer); clearTimeout(c.dropT); clearInterval(c.tick);
   try{ c.pc?.close(); }catch(e){} c.local?.getTracks().forEach(t=>t.stop()); try{ c.wake?.release(); }catch(e){}
@@ -871,6 +879,13 @@ $('c-acc').onclick=acceptCall;
 $('c-mic').onclick=()=>{ const t=call?.local?.getAudioTracks()[0]; if(!t) return; t.enabled=!t.enabled; $('c-mic').classList.toggle('off',!t.enabled); };
 $('c-cam').onclick=()=>{ const t=call?.local?.getVideoTracks()[0]; if(!t) return; t.enabled=!t.enabled; $('c-cam').classList.toggle('off',!t.enabled); };
 
+function handleNativeIntent(){
+  let s=''; try{ s=window.KotakNative?.takeIntent?.()||''; }catch(e){} if(!s||!me) return; let it; try{ it=JSON.parse(s); }catch(e){ return; }
+  if(it.type==='call'){ nativeCall=it; setTimeout(()=>{ if(nativeCall===it) nativeCall=null; },30000); if(call&&call.id===it.cid&&call.state==='ringing'){ nativeCall=null; if(it.action==='accept') acceptCall(); else if(it.action==='decline') endCall('declined',true); } }
+  else if(it.type==='msg'){ const c=chats.find(x=>x.id===it.conv); if(c) openChat(c); }
+}
+window.addEventListener('kotak-intent',()=>handleNativeIntent());
+window.Capacitor?.Plugins?.App?.addListener?.('resume',()=>{ handleNativeIntent(); if(me) startCalls(); });
 const IS_NATIVE=!!(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform());
 const NPush=()=>window.Capacitor?.Plugins?.PushNotifications;
 let nTok=null;
@@ -916,7 +931,7 @@ async function togglePush(){
     toast('Уведомления включены'); updatePushBtn();
   }catch(e){ toast('Уведомления: '+(e.message||e)); }
 }
-const APP_VERSION='26';
+const APP_VERSION='28';
 async function runDiag(){
   const out=[]; const t=async(name,fn)=>{ try{ const r=await fn(); out.push((r&&r.error?'❌ ':'✅ ')+name+(r&&r.error?': '+r.error.message:'')); }catch(e){ out.push('❌ '+name+': '+(e.message||e)); } };
   await t('messages.reply_to_id',()=>client.from('messages').select('id,reply_to_id').limit(1));
@@ -1325,7 +1340,7 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&stView) closeStory
 (async()=>{
   try {
   if(!client) { $('auth-error').textContent='Supabase не загрузился. Проверь интернет-соединение.'; return; }
-  try { await loadSession(); updatePushBtn().catch(()=>{}); } catch(error) { toast(error.message||'Ошибка загрузки аккаунта'); }
+  try { await loadSession(); updatePushBtn().catch(()=>{}); handleNativeIntent(); } catch(error) { toast(error.message||'Ошибка загрузки аккаунта'); }
   client.auth.onAuthStateChange((_event)=>{ if(_event==='SIGNED_OUT'){ $('app').hidden=true; $('auth-wrap').hidden=false; } });
   if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
   } finally { $('boot').hidden=true; }

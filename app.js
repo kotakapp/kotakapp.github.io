@@ -431,7 +431,7 @@ async function toggleVoice(btn){
 let roomPushed=false, cardPushed=false;
 function closeRoom(){ $('card').hidden=true; cardPushed=false; cancelEdit(); stopTyping(); stopRecording(false); stopVoice(); $('app').dataset.view='list'; current=null; replyTo=null; $('reply-bar').hidden=true; $('room').hidden=true; $('empty').hidden=false; renderChats(); }
 window.addEventListener('popstate',()=>{ if(pageDepth>0){ pageDepth--; const o=[...document.querySelectorAll('.page:not([hidden])')].pop(); if(o) o.hidden=true; return; } if(!$('card').hidden){ $('card').hidden=true; cardPushed=false; return; } roomPushed=false; if($('app').dataset.view==='room') closeRoom(); });
-function setTab(tab) {
+function setTab(tab) { if(tab==='profile') setTimeout(()=>loadMyStories().catch(()=>{}),0);
   for(const name of ['chats','contacts','settings','profile']) $('pane-'+name).hidden=name!==tab;
   $('side').dataset.tab=tab;
   document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab));
@@ -863,7 +863,7 @@ async function togglePush(){
     toast('Уведомления включены'); updatePushBtn();
   }catch(e){ toast('Уведомления: '+(e.message||e)); }
 }
-const APP_VERSION='21';
+const APP_VERSION='23';
 async function runDiag(){
   const out=[]; const t=async(name,fn)=>{ try{ const r=await fn(); out.push((r&&r.error?'❌ ':'✅ ')+name+(r&&r.error?': '+r.error.message:'')); }catch(e){ out.push('❌ '+name+': '+(e.message||e)); } };
   await t('messages.reply_to_id',()=>client.from('messages').select('id,reply_to_id').limit(1));
@@ -1163,14 +1163,103 @@ $('av-view').onclick=()=>{ $('av-sheet').hidden=true; if(!me?.avatar_url) return
 $('av-remove').onclick=()=>{ $('av-sheet').hidden=true; removeAvatar(); };
 $('av-close').onclick=()=>{ $('av-sheet').hidden=true; };
 $('av-sheet').onclick=e=>{ if(e.target===$('av-sheet')) $('av-sheet').hidden=true; };
+/* ---- v23: истории (24 часа) + архив (15 дней) ---- */
+let myStories=[], stTab='pub', stFile=null, stView=null; const urlStories=new Map();
+const DAY=864e5, ARCH=15*DAY;
+const stBgs=['linear-gradient(145deg,#168bff,#5b2bd6)','linear-gradient(145deg,#ff6b9d,#f0780f)','linear-gradient(145deg,#2fe0b0,#0b6fa8)','linear-gradient(145deg,#a06bff,#d02a6a)'];
+async function storyUrl(path){
+  const c=urlStories.get(path); if(c&&c.exp>Date.now()) return c.url;
+  const {data,error}=await client.storage.from('stories').createSignedUrl(path,3600); if(error) throw error;
+  urlStories.set(path,{url:data.signedUrl,exp:Date.now()+3300000}); return data.signedUrl;
+}
+const stAge=x=>Date.now()-new Date(x.created_at).getTime();
+const stLeft=x=>{ const h=Math.max(1,Math.ceil((DAY-stAge(x))/36e5)); return 'ещё '+h+' ч'; };
+const stWhen=x=>new Date(x.created_at).toLocaleDateString('ru',{day:'numeric',month:'short'});
+async function loadMyStories(){
+  if(!me||!client) return;
+  const {data,error}=await client.from('stories').select('*').eq('user_id',me.id).order('created_at',{ascending:false});
+  if(error){ myStories=[]; renderStories(error.message); return; }
+  myStories=(data||[]).filter(x=>stAge(x)<ARCH); renderStories(); cleanupStories().catch(()=>{});
+}
+function renderStories(err){
+  const act=myStories.filter(x=>stAge(x)<DAY), arc=myStories.filter(x=>stAge(x)>=DAY), list=stTab==='arc'?arc:act;
+  $('pe-t').textContent=err?'Истории недоступны':stTab==='arc'?'Архив пуст':'Нет активной истории';
+  $('pe-s').textContent=err?'Нужно выполнить SQL для историй ('+err+')':stTab==='arc'?'Здесь ваши истории хранятся 15 дней':'История видна друзьям 24 часа, потом попадает в архив';
+  document.querySelector('.pempty').hidden=!!list.length&&!err;
+  $('p-add').hidden=stTab==='arc'||!!err; $('p-add').textContent='+ Добавить историю';
+  $('st-grid').innerHTML=list.map((x,i)=>`<button type="button" class="stt" data-i="${i}">${x.kind==='text'?`<div class="stx" style="background:${x.bg||stBgs[0]}">${esc((x.text||'').slice(0,80))}</div>`:`<div class="stm" data-path="${esc(x.media_path)}" data-k="${x.kind}"></div>${x.kind==='video'?'<i class="stp">▶</i>':''}`}<small>${stTab==='arc'?stWhen(x):stLeft(x)}</small></button>`).join('');
+  $('st-grid')._list=list;
+  $('st-grid').querySelectorAll('.stm').forEach(async el=>{ try{ const u=await storyUrl(el.dataset.path); if(el.dataset.k==='video'){ el.innerHTML=`<video muted playsinline preload="metadata" src="${esc(u)}#t=0.1"></video>`; } else el.style.backgroundImage=`url("${u}")`; }catch(e){} });
+}
 $('ptabs').onclick=e=>{
-  const b=e.target.closest('[data-p]'); if(!b) return; const a=b.dataset.p==='arc';
-  document.querySelectorAll('#ptabs button').forEach(x=>x.classList.toggle('on',x===b));
-  $('pe-t').textContent=a?'Архив пуст':'Пока нет публикаций';
-  $('pe-s').textContent=a?'Здесь будут скрытые публикации':'Делитесь мыслями, фото и моментами с друзьями';
-  $('p-add').hidden=a;
+  const b=e.target.closest('[data-p]'); if(!b) return; stTab=b.dataset.p==='arc'?'arc':'pub';
+  document.querySelectorAll('#ptabs button').forEach(x=>x.classList.toggle('on',x===b)); renderStories();
 };
-$('p-add').onclick=()=>toast('Публикации скоро появятся');
+$('st-grid').onclick=e=>{ const b=e.target.closest('.stt'); if(!b) return; openStory($('st-grid')._list,+b.dataset.i); };
+function openStory(list,i){
+  if(!list?.length) return; stView={list,i};
+  let ov=document.getElementById('sv'); if(!ov){ ov=document.createElement('div'); ov.id='sv'; ov.className='sv'; ov.onclick=svClick; document.body.appendChild(ov); }
+  ov.hidden=false; renderStoryView();
+}
+function closeStory(){ const ov=document.getElementById('sv'); if(ov){ ov.querySelectorAll('video').forEach(v=>v.pause()); ov.hidden=true; ov.innerHTML=''; } stView=null; }
+function renderStoryView(){
+  const ov=document.getElementById('sv'); if(!ov||!stView) return; const {list,i}=stView, x=list[i];
+  const prog=list.map((_,k)=>`<i class="${k<i?'d':k===i?'c':''}"></i>`).join('');
+  const body=x.kind==='text'?`<div class="svt" style="background:${x.bg||stBgs[0]}"><p>${esc(x.text||'')}</p></div>`:`<div class="svm" id="sv-m"></div>${x.text?`<div class="svc">${esc(x.text)}</div>`:''}`;
+  ov.innerHTML=`<div class="svp">${prog}</div><div class="svh"><b>${esc(me.display_name||me.username)}</b><span>${stAge(x)<DAY?stLeft(x):stWhen(x)}</span><button type="button" data-sv="del" aria-label="Удалить">🗑</button><button type="button" data-sv="close" aria-label="Закрыть">✕</button></div>${body}`;
+  if(x.kind!=='text') storyUrl(x.media_path).then(u=>{ const m=document.getElementById('sv-m'); if(!m||stView?.list[stView.i]!==x) return; m.innerHTML=x.kind==='video'?`<video src="${esc(u)}" controls autoplay playsinline></video>`:`<img src="${esc(u)}" alt="История">`; }).catch(()=>{ const m=document.getElementById('sv-m'); if(m) m.textContent='Файл недоступен'; });
+}
+function svClick(e){
+  const a=e.target.closest('[data-sv]');
+  if(a){ if(a.dataset.sv==='close') return closeStory(); if(a.dataset.sv==='del') return deleteStory(); }
+  if(e.target.closest('video')) return;
+  const r=e.currentTarget.getBoundingClientRect(), left=(e.clientX-r.left)<r.width*.35;
+  if(left){ if(stView.i>0){ stView.i--; renderStoryView(); } } else if(stView.i<stView.list.length-1){ stView.i++; renderStoryView(); } else closeStory();
+}
+async function deleteStory(){
+  const x=stView?.list[stView.i]; if(!x||!confirm('Удалить эту историю?')) return;
+  try{
+    const {error}=await client.from('stories').delete().eq('id',x.id); if(error) throw error;
+    if(x.media_path) client.storage.from('stories').remove([x.media_path]).catch(()=>{});
+    closeStory(); await loadMyStories(); toast('История удалена');
+  }catch(e){ toast('Не удалилось: '+(e.message||e)); }
+}
+async function cleanupStories(){
+  const cut=new Date(Date.now()-ARCH).toISOString();
+  const {data}=await client.from('stories').select('id,media_path').eq('user_id',me.id).lt('created_at',cut).limit(50);
+  if(!data?.length) return;
+  const paths=data.map(x=>x.media_path).filter(Boolean);
+  if(paths.length) await client.storage.from('stories').remove(paths);
+  await client.from('stories').delete().in('id',data.map(x=>x.id));
+}
+function openStoryNew(){
+  stFile=null; document.getElementById('stn')?.remove();
+  const d=document.createElement('div'); d.id='stn'; d.className='own-ov';
+  d.innerHTML=`<div class="own-card stn-card" role="dialog"><h3>Новая история</h3><textarea id="stn-text" maxlength="200" rows="3" placeholder="Текст или подпись (до 200 символов)"></textarea><button type="button" class="own-btn" data-n="file">📷 Фото или видео</button><p class="muted small" id="stn-file">Файл не выбран. Можно опубликовать только текст.</p><button type="button" class="own-btn pri" data-n="go">Опубликовать</button><button type="button" class="own-btn" data-n="x">Отмена</button><input type="file" id="stn-in" accept="image/*,video/*" hidden></div>`;
+  d.onclick=e=>{ const a=e.target.closest('[data-n]'); if(a?.dataset.n==='file') $('stn-in').click(); else if(a?.dataset.n==='go') publishStory(a); else if(a?.dataset.n==='x'||e.target===d) d.remove(); };
+  document.body.appendChild(d);
+  $('stn-in').onchange=e=>{ const f=e.target.files[0]; if(!f) return; if(!f.type.startsWith('image/')&&!f.type.startsWith('video/')) return toast('Только фото или видео'); if(f.type.startsWith('video/')&&f.size>25*1024*1024) return toast('Видео больше 25 МБ. Выберите покороче.'); stFile=f; $('stn-file').textContent='Выбрано: '+(f.name||'файл'); };
+}
+async function publishStory(btn){
+  const text=$('stn-text').value.trim(), f=stFile; if(!text&&!f) return toast('Напишите текст или выберите фото/видео');
+  btn.disabled=true; toast('Публикую…'); let path=null;
+  try{
+    const row={user_id:me.id,kind:'text',text:text||null,bg:stBgs[Math.floor(Math.random()*stBgs.length)]};
+    if(f){
+      const isImg=f.type.startsWith('image/'); let blob=f, type=f.type, ext;
+      if(isImg){ blob=await resizeJpeg(f); type='image/jpeg'; ext='jpg'; } else ext=((f.name||'').split('.').pop()||'mp4').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,5)||'mp4';
+      path=`${me.id}/${Date.now()}.${ext}`;
+      const up=await client.storage.from('stories').upload(path,blob,{contentType:type}); if(up.error) throw up.error;
+      row.kind=isImg?'image':'video'; row.media_path=path; row.bg=null;
+    }
+    const {error}=await client.from('stories').insert(row); if(error) throw error;
+    document.getElementById('stn')?.remove(); stTab='pub';
+    document.querySelectorAll('#ptabs button').forEach(x=>x.classList.toggle('on',x.dataset.p==='pub'));
+    await loadMyStories(); toast('История опубликована');
+  }catch(e){ if(path) client.storage.from('stories').remove([path]).catch(()=>{}); toast('Не опубликовано: '+(e.message||e)); btn.disabled=false; }
+}
+$('p-add').onclick=openStoryNew;
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&stView) closeStory(); });
 
 (async()=>{
   try {

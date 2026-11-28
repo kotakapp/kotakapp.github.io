@@ -13,12 +13,12 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=21">
+<link rel="stylesheet" href="styles.css?v=23">
 </head>
 <body>
 <script>
 (function(){try{
-  var V='21',k='kotak_ver';
+  var V='23',k='kotak_ver';
   if(localStorage.getItem(k)!==V){
     localStorage.setItem(k,V);
     var jobs=[];
@@ -69,8 +69,9 @@
         <p class="bio-line" id="me-bio"></p>
         <input type="file" id="av-file" accept="image/*" hidden>
         <button type="button" class="primary pedit" id="p-edit">Изменить</button>
-        <div class="ptabs" id="ptabs"><button type="button" data-p="pub" class="on">Публикации</button><button type="button" data-p="arc">Архив</button></div>
-        <div class="pempty"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.800"/><path d="M4 18l5-5 4 4 3-3 4 4"/></svg><b id="pe-t">Пока нет публикаций</b><span id="pe-s">Делитесь мыслями, фото и моментами с друзьями</span><button type="button" class="addpub" id="p-add">+ Добавить публикацию</button></div>
+        <div class="ptabs" id="ptabs"><button type="button" data-p="pub" class="on">История</button><button type="button" data-p="arc">Архив</button></div>
+        <div class="pempty"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.800"/><path d="M4 18l5-5 4 4 3-3 4 4"/></svg><b id="pe-t">Нет активной истории</b><span id="pe-s">История видна друзьям 24 часа, потом попадает в архив</span><button type="button" class="addpub" id="p-add">+ Добавить историю</button></div>
+        <div class="stgrid" id="st-grid"></div>
       </div>
     </div>
     <nav class="tabs" id="tabs">
@@ -125,7 +126,7 @@
 <div class="sheet" id="sheet" hidden><div class="sheet-body"><div class="react-row" id="react-row"></div><button id="act-reply">Ответить</button><button id="act-edit">Изменить</button><button id="act-del-me">Удалить у меня</button><button id="act-del-all">Удалить у всех</button><button id="act-close" class="muted">Закрыть</button></div></div>
 <script>
 (function(){
-  var V='21', st={ok:{},err:[]};
+  var V='23', st={ok:{},err:[]};
   addEventListener('error',function(e){ st.err.push(e.message||'error'); });
   addEventListener('unhandledrejection',function(e){ st.err.push(String((e.reason&&e.reason.message)||e.reason)); });
   function load(src,ms){ return new Promise(function(res){

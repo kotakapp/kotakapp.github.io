@@ -10,6 +10,9 @@ let reactions = [], msgMap = new Map(), reactWarned = false;
 let hiddenIds = new Set(), editing = null;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const initials = value => (String(value || '?').trim()[0] || '?').toUpperCase();
+const avCls = v => 'c'+([...String(v||'?')].reduce((a,c)=>a+c.charCodeAt(0),0)%6);
+const avatar = (name,dot=false) => `<div class="avatar ${avCls(name)}">${esc(initials(name))}${dot?'<span class="dot"></span>':''}</div>`;
+const setAv = (id,name,extra='') => { const el=$(id); el.className=('avatar '+extra+' '+avCls(name)).replace(/\s+/g,' ').trim(); el.textContent=initials(name); };
 const time = value => new Date(value).toLocaleTimeString('ru', {hour:'2-digit', minute:'2-digit'});
 function toast(message) { const el=$('toast'); el.textContent=message; el.classList.add('show'); clearTimeout(window.toastTimer); window.toastTimer=setTimeout(()=>el.classList.remove('show'),7000); }
 window.addEventListener('unhandledrejection',e=>toast('Ошибка: '+(e.reason?.message||e.reason)));
@@ -64,7 +67,7 @@ async function loadSession() {
   }
   me={...profile,id:user.id};
   $('auth-wrap').hidden=true; $('app').hidden=false;
-  $('me-av').textContent=initials(me.display_name||me.username);
+  setAv('me-av',me.display_name||me.username,'big');
   $('me-name').textContent=me.display_name||me.username;
   $('me-user').textContent='@'+me.username;
   await loadHidden();
@@ -158,15 +161,18 @@ function unreadOf(c){
 }
 function badge(c){ const n=unreadOf(c); return n?`<span class="badge">${n>99?'99+':n}</span>`:''; }
 const currentChat=()=>chats.find(c=>c.id===current?.id)||current;
-function tickState(createdAt){
-  const others=(currentChat()?.participants||[]).filter(x=>x.user_id!==me.id);
+const TICK1='<svg viewBox="0 0 20 16"><path d="M4 8.500l3.500 3.500L16 4"/></svg>', TICK2='<svg viewBox="0 0 22 16"><path d="M1.500 8.500L5 12l8-8.500M9 11.500l1 .8L19 4"/></svg>';
+const tickSvg=s=>s==='sent'?TICK1:TICK2;
+const tickState=createdAt=>tickFor(currentChat(),createdAt);
+function tickFor(chat,createdAt){
+  const others=(chat?.participants||[]).filter(x=>x.user_id!==me.id);
   if(!others.length) return 'sent';
   const t=new Date(createdAt).getTime();
   if(others.every(x=>x.last_read_at&&new Date(x.last_read_at).getTime()>=t)) return 'read';
   if(others.every(x=>x.last_delivered_at&&new Date(x.last_delivered_at).getTime()>=t)) return 'delivered';
   return 'sent';
 }
-function paintTick(el,createdAt){ if(!el) return; const s=tickState(createdAt); el.className='tick '+s; el.textContent=s==='sent'?'✓':'✓✓'; }
+function paintTick(el,createdAt){ if(!el) return; const s=tickState(createdAt); el.className='tick '+s; el.innerHTML=tickSvg(s); }
 function updateTicks(){ document.querySelectorAll('#msgs .m.me').forEach(d=>paintTick(d.querySelector('.tick'),d.dataset.t)); }
 async function markRead(id){
   if(!id||!me) return;
@@ -181,17 +187,23 @@ function markDelivered(){
   if(!me||Date.now()-lastDel<2000) return; lastDel=Date.now();
   client.rpc('mark_delivered').then(({error})=>{ if(error) console.warn('mark delivered',error); });
 }
+let unreadOnly=false;
 function renderChats() {
   const total=chats.reduce((s,c)=>s+unreadOf(c),0); document.title=total?`(${total}) KotakApp`:'KotakApp';
   const q=$('q').value.trim().toLowerCase();
-  $('chat-list').innerHTML=chats.filter(c=>c.title.toLowerCase().includes(q)).map(c=>`<li><button class="item ${current?.id===c.id?'on':''}" data-chat="${c.id}"><div class="avatar">${esc(initials(c.title))}${c.type==='direct'&&online.has(c.otherId)?'<span class="dot"></span>':''}</div><div class="meta"><div class="row"><span class="name">${esc(c.title)}</span><span class="muted small">${c.last?time(c.last.created_at):''}</span></div><div class="row2"><div class="last">${isTyping(c)?'печатает…':c.last?(c.last.deleted_at?'🚫 Сообщение удалено':c.last.message_type==='voice'?'🎤 Голосовое':esc(c.last.content||'Вложение')):'Сообщений пока нет'}</div>${badge(c)}</div></div></button></li>`).join('')||'<li class="muted" style="padding:20px">Чатов пока нет. Найди друзей во вкладке «Контакты».</li>';
+  $('chat-list').innerHTML=chats.filter(c=>c.title.toLowerCase().includes(q)&&(!unreadOnly||unreadOf(c)>0)).map(c=>{
+    const n=unreadOf(c), typing=isTyping(c), mineLast=!!c.last&&c.last.sender_id===me.id&&!c.last.deleted_at;
+    const prev=typing?'печатает…':c.last?(c.last.deleted_at?'🚫 Сообщение удалено':c.last.message_type==='voice'?'🎤 Голосовое':esc(c.last.content||'Вложение')):'Сообщений пока нет';
+    const tk=mineLast?`<span class="tick ${tickFor(c,c.last.created_at)}">${tickSvg(tickFor(c,c.last.created_at))}</span>`:'';
+    return `<li><button class="item ${current?.id===c.id?'on':''}" data-chat="${c.id}">${avatar(c.title,c.type==='direct'&&online.has(c.otherId))}<div class="meta"><div class="row"><span class="name">${esc(c.title)}</span><span class="when ${n?'new':''}">${tk}${c.last?time(c.last.created_at):''}</span></div><div class="row2"><div class="last ${typing?'typing':''}">${prev}</div>${badge(c)}</div></div></button></li>`;
+  }).join('')||`<li class="muted" style="padding:20px">${unreadOnly?'Непрочитанных чатов нет.':'Чатов пока нет. Найди друзей во вкладке «Контакты».'}</li>`;
 }
 async function searchUsers() {
   const q=$('user-search').value.trim().toLowerCase();
   if(q.length<2) { $('contact-list').innerHTML='<li class="muted" style="padding:20px">Введи минимум 2 символа username.</li>'; return; }
   const {data,error}=await client.from('profiles').select('id,username,display_name').ilike('username',`%${q}%`).neq('id',me.id).limit(20);
   if(error) { toast(error.message); return; }
-  $('contact-list').innerHTML=(data||[]).map(u=>`<li><button class="item" data-user="${u.id}"><div class="avatar">${esc(initials(u.display_name||u.username))}</div><div class="meta"><div class="name">${esc(u.display_name||u.username)}</div><div class="last">@${esc(u.username)}</div></div></button></li>`).join('')||'<li class="muted" style="padding:20px">Пользователи не найдены.</li>';
+  $('contact-list').innerHTML=(data||[]).map(u=>`<li><button class="item" data-user="${u.id}">${avatar(u.display_name||u.username)}<div class="meta"><div class="name">${esc(u.display_name||u.username)}</div><div class="last">@${esc(u.username)}</div></div></button></li>`).join('')||'<li class="muted" style="padding:20px">Пользователи не найдены.</li>';
 }
 async function startDirectChat(userId, title) {
   try {
@@ -206,7 +218,7 @@ async function startDirectChat(userId, title) {
 }
 async function openChat(chat) {
   cancelEdit(); current=chat; replyTo=null; $('reply-bar').hidden=true; $('room').hidden=false; $('empty').hidden=true;
-  $('room-av').textContent=initials(chat.title); $('room-title').textContent=chat.title;
+  setAv('room-av',chat.title); $('room-title').textContent=chat.title;
   $('room-sub').textContent=chat.type==='group'?'Группа':'KotakApp'; $('app').dataset.view='room';
   updateRoomStatus();
   if(!roomPushed){ history.pushState({room:1},''); roomPushed=true; }
@@ -380,7 +392,8 @@ let roomPushed=false;
 function closeRoom(){ cancelEdit(); stopTyping(); stopRecording(false); stopVoice(); $('app').dataset.view='list'; current=null; replyTo=null; $('reply-bar').hidden=true; $('room').hidden=true; $('empty').hidden=false; renderChats(); }
 window.addEventListener('popstate',()=>{ roomPushed=false; if($('app').dataset.view==='room') closeRoom(); });
 function setTab(tab) {
-  for(const name of ['chats','contacts','profile']) $('pane-'+name).hidden=name!==tab;
+  for(const name of ['chats','contacts','settings','profile']) $('pane-'+name).hidden=name!==tab;
+  $('side').dataset.tab=tab;
   document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab));
 }
 async function logout() { await stopRealtime(); await stopPresence(); await client.auth.signOut(); current=null; chats=[]; $('app').hidden=true; $('auth-wrap').hidden=false; setAuthMode('login'); }
@@ -398,6 +411,13 @@ $('rec-cancel').onclick=()=>stopRecording(false);
 $('text').addEventListener('input',()=>{ noteTyping(); syncBtns(); const t=$('text'); t.style.height='auto'; t.style.height=Math.min(t.scrollHeight,140)+'px'; });
 $('text').addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey&&!matchMedia('(pointer:coarse)').matches){ e.preventDefault(); $('composer').requestSubmit(); } });
 $('logout').onclick=logout;
+$('h-search').onclick=()=>{ setTab('chats'); $('q').focus(); };
+$('h-menu').onclick=e=>{ e.stopPropagation(); $('menu').hidden=!$('menu').hidden; };
+document.addEventListener('click',e=>{ if(!e.target.closest('#menu')) $('menu').hidden=true; });
+$('m-group').onclick=()=>{ $('menu').hidden=true; openGroup(); };
+$('m-settings').onclick=()=>{ $('menu').hidden=true; setTab('settings'); };
+$('q-filter').onclick=()=>{ unreadOnly=!unreadOnly; $('q-filter').setAttribute('aria-pressed',unreadOnly); renderChats(); };
+$('fab').onclick=()=>{ setTab('contacts'); $('user-search').focus(); };
 $('react-row').innerHTML=EMOJI.map(x=>`<button data-e="${x}">${x}</button>`).join('');
 $('msgs').onclick=e=>{
   const pb=e.target.closest('.vplay'); if(pb){ toggleVoice(pb); return; }
@@ -453,7 +473,7 @@ async function searchGroupUsers(){
   if(q.length<2){ $('g-results').innerHTML=''; return; }
   const {data,error}=await client.from('profiles').select('id,username,display_name').ilike('username',`%${q}%`).neq('id',me.id).limit(15);
   if(error){ toast(error.message); return; }
-  $('g-results').innerHTML=(data||[]).map(u=>{ const n=u.display_name||u.username; return `<li><button type="button" class="item ${gSel.has(u.id)?'on':''}" data-gid="${esc(u.id)}" data-name="${esc(n)}"><div class="avatar">${esc(initials(n))}</div><div class="meta"><div class="name">${esc(n)}</div><div class="last">@${esc(u.username)}</div></div></button></li>`; }).join('')||'<li class="muted" style="padding:14px">Не найдено.</li>';
+  $('g-results').innerHTML=(data||[]).map(u=>{ const n=u.display_name||u.username; return `<li><button type="button" class="item ${gSel.has(u.id)?'on':''}" data-gid="${esc(u.id)}" data-name="${esc(n)}">${avatar(n)}<div class="meta"><div class="name">${esc(n)}</div><div class="last">@${esc(u.username)}</div></div></button></li>`; }).join('')||'<li class="muted" style="padding:14px">Не найдено.</li>';
 }
 async function createGroup(){
   const title=$('g-title').value.trim();
@@ -470,7 +490,6 @@ async function createGroup(){
   }catch(e){ toast(e.message||String(e)); }
   finally{ $('g-create').disabled=false; }
 }
-$('new-group').onclick=openGroup;
 $('g-cancel').onclick=()=>$('group-sheet').hidden=true;
 $('group-sheet').onclick=e=>{ if(e.target===$('group-sheet')) $('group-sheet').hidden=true; };
 $('g-search').oninput=()=>{ clearTimeout(window.gTimer); window.gTimer=setTimeout(searchGroupUsers,250); };
@@ -503,7 +522,7 @@ async function togglePush(){
   }catch(e){ toast('Уведомления: '+(e.message||e)); }
 }
 $('push-btn').onclick=togglePush;
-const APP_VERSION='11';
+const APP_VERSION='12';
 $('ver').textContent='Версия приложения: '+APP_VERSION;
 async function runDiag(){
   const out=[]; const t=async(name,fn)=>{ try{ const r=await fn(); out.push((r&&r.error?'❌ ':'✅ ')+name+(r&&r.error?': '+r.error.message:'')); }catch(e){ out.push('❌ '+name+': '+(e.message||e)); } };

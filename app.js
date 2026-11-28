@@ -11,8 +11,24 @@ let hiddenIds = new Set(), editing = null;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const initials = value => (String(value || '?').trim()[0] || '?').toUpperCase();
 const avCls = v => 'c'+([...String(v||'?')].reduce((a,c)=>a+c.charCodeAt(0),0)%6);
-const avatar = (name,dot=false,url='') => url?`<div class="avatar photo" style="background-image:url('${esc(url)}')">${dot?'<span class="dot"></span>':''}</div>`:`<div class="avatar ${avCls(name)}">${esc(initials(name))}${dot?'<span class="dot"></span>':''}</div>`;
-const setAv = (id,name,extra='',url='') => { const el=$(id); el.className=('avatar '+extra+' '+(url?'photo':avCls(name))).replace(/\s+/g,' ').trim(); el.style.backgroundImage=url?`url("${url}")`:''; el.textContent=url?'':initials(name); };
+const avatar = (name,dot=false,url='',own=false) => url?`<div class="avatar photo${own?' owner':''}" style="background-image:url('${esc(url)}')">${dot?'<span class="dot"></span>':''}</div>`:`<div class="avatar ${avCls(name)}${own?' owner':''}">${esc(initials(name))}${dot?'<span class="dot"></span>':''}</div>`;
+const setAv = (id,name,extra='',url='',own=false) => { const el=$(id); el.className=('avatar '+extra+(own?' owner ':' ')+' '+(url?'photo':avCls(name))).replace(/\s+/g,' ').trim(); el.style.backgroundImage=url?`url("${url}")`:''; el.textContent=url?'':initials(name); };
+
+/* ---- v20: значок создателя (owner) ---- */
+const isOwner = u => String(u||'').toLowerCase()==='owner';
+const VB_SVG='<svg viewBox="0 0 24 24" aria-hidden="true"><path class="vb-bg" d="M12 1.500l2.600 1.900 3.200-.1 1 3.100 2.600 1.900-1 3.100 1 3.100-2.600 1.900-1 3.100-3.200-.1L12 22.500l-2.600-1.900-3.200.1-1-3.100-2.600-1.900 1-3.100-1-3.100 2.600-1.900 1-3.100 3.200.1z"/><path class="vb-ck" d="M7.800 12.200l3 3 5.500-6"/></svg>';
+const vbadge = (u,cls='') => isOwner(u)?`<span class="vbadge ${cls}" role="button" tabindex="0" aria-label="Создатель KotakApp">${VB_SVG}</span>`:'';
+const nameHtml = (name,u,cls='') => esc(name)+vbadge(u,cls);
+function showOwnerInfo(){
+  document.getElementById('own-sheet')?.remove();
+  const mine=me&&isOwner(me.username);
+  const d=document.createElement('div'); d.id='own-sheet'; d.className='own-ov';
+  d.innerHTML=`<div class="own-card" role="dialog" aria-modal="true"><div class="own-ic">${VB_SVG}</div><h3>Создатель KotakApp</h3><p>Это официальный аккаунт автора и владельца приложения. Галочка подтверждает, что вы общаетесь с настоящим создателем KotakApp.</p><p class="muted small">Идеи, ошибки и вопросы можно писать прямо сюда.</p>${mine?'':'<button type="button" class="own-btn pri" data-o="chat">Написать создателю</button>'}<button type="button" class="own-btn" data-o="close">Закрыть</button></div>`;
+  d.onclick=e=>{ const a=e.target.closest('[data-o]'); if(a?.dataset.o==='chat'){ d.remove(); chatWithOwner(); } else if(a||e.target===d) d.remove(); };
+  document.body.appendChild(d);
+}
+document.addEventListener('click',e=>{ if(e.target.closest('.vbadge')){ e.preventDefault(); e.stopPropagation(); showOwnerInfo(); } },true);
+document.addEventListener('keydown',e=>{ if((e.key==='Enter'||e.key===' ')&&e.target.closest?.('.vbadge')){ e.preventDefault(); showOwnerInfo(); } if(e.key==='Escape') document.getElementById('own-sheet')?.remove(); });
 const time = value => new Date(value).toLocaleTimeString('ru', {hour:'2-digit', minute:'2-digit'});
 function toast(message) { const el=$('toast'); el.textContent=message; el.classList.add('show'); clearTimeout(window.toastTimer); window.toastTimer=setTimeout(()=>el.classList.remove('show'),7000); }
 window.addEventListener('unhandledrejection',e=>toast('Ошибка: '+(e.reason?.message||e.reason)));
@@ -200,7 +216,7 @@ function renderChats() {
     const n=unreadOf(c), typing=isTyping(c), mineLast=!!c.last&&c.last.sender_id===me.id&&!c.last.deleted_at;
     const prev=typing?'печатает…':c.last?(c.last.deleted_at?'🚫 Сообщение удалено':c.last.message_type==='voice'?'🎤 Голосовое':c.last.message_type==='image'?'📷 Фото':c.last.message_type==='video'?'🎬 Видео':esc(c.last.content||'Вложение')):'Сообщений пока нет';
     const tk=mineLast?`<span class="tick ${tickFor(c,c.last.created_at)}">${tickSvg(tickFor(c,c.last.created_at))}</span>`:'';
-    return `<li><button class="item ${current?.id===c.id?'on':''}" data-chat="${c.id}">${avatar(c.title,c.type==='direct'&&online.has(c.otherId),c.type==='direct'?c.otherAvatar:'')}<div class="meta"><div class="row"><span class="name">${esc(c.title)}</span><span class="when ${n?'new':''}">${tk}${c.last?time(c.last.created_at):''}</span></div><div class="row2"><div class="last ${typing?'typing':''}">${prev}</div>${badge(c)}</div></div></button></li>`;
+    return `<li><button class="item ${current?.id===c.id?'on':''}${c.type==='direct'&&isOwner(c.otherUsername)?' owner-item':''}" data-chat="${c.id}">${avatar(c.title,c.type==='direct'&&online.has(c.otherId),c.type==='direct'?c.otherAvatar:'',c.type==='direct'&&isOwner(c.otherUsername))}<div class="meta"><div class="row"><span class="name">${nameHtml(c.title,c.type==='direct'?c.otherUsername:'')}</span><span class="when ${n?'new':''}">${tk}${c.last?time(c.last.created_at):''}</span></div><div class="row2"><div class="last ${typing?'typing':''}">${prev}</div>${badge(c)}</div></div></button></li>`;
   }).join('')||`<li class="muted" style="padding:20px">${chatFilter==='unread'?'Непрочитанных чатов нет.':chatFilter!=='all'&&chats.length?'В этом разделе чатов нет.':'Чатов пока нет. Найди друзей во вкладке «Контакты».'}</li>`;
   $('cnt').textContent=chats.length; $('cnt').hidden=!chats.length;
   renderContacts();
@@ -210,11 +226,11 @@ const userQuery=()=>$('user-search').value.trim().replace(/^@/,'').toLowerCase()
 function renderContacts(){
   const q=userQuery(); let html;
   if(q.length>=2){
-    html='<li class="sec">Результаты поиска</li>'+((contactHits||[]).map(u=>`<li><button class="item" data-user="${u.id}">${avatar(u.display_name||u.username,online.has(u.id),u.avatar_url)}<div class="meta"><div class="name">${esc(u.display_name||u.username)}</div><div class="last">@${esc(u.username)}</div></div><span class="go">Написать</span></button></li>`).join('')||'<li class="muted" style="padding:20px">Пользователи не найдены.</li>');
+    html='<li class="sec">Результаты поиска</li>'+((contactHits||[]).map(u=>`<li><button class="item${isOwner(u.username)?' owner-item':''}" data-user="${u.id}">${avatar(u.display_name||u.username,online.has(u.id),u.avatar_url,isOwner(u.username))}<div class="meta"><div class="name">${nameHtml(u.display_name||u.username,u.username)}</div><div class="last">@${esc(u.username)}</div></div><span class="go">Написать</span></button></li>`).join('')||'<li class="muted" style="padding:20px">Пользователи не найдены.</li>');
   } else {
     const seen=new Set();
     const cs=chats.filter(c=>c.type==='direct'&&c.otherId&&!seen.has(c.otherId)&&seen.add(c.otherId)&&(!q||(c.title+' '+(c.otherUsername||'')).toLowerCase().includes(q)));
-    html='<li class="sec">Контакты</li>'+(cs.map(c=>{ const on=online.has(c.otherId); return `<li><button class="item" data-user="${c.otherId}">${avatar(c.title,on,c.otherAvatar)}<div class="meta"><div class="name">${esc(c.title)}</div><div class="st ${on?'on':''}"><i></i>${on?'В сети':'Не в сети'}</div></div></button></li>`; }).join('')||`<li class="muted" style="padding:20px">${q?'Среди контактов никого нет. Введи ещё символ, чтобы искать по всем пользователям.':'Контактов пока нет. Найди человека по @username и напиши ему.'}</li>`);
+    html='<li class="sec">Контакты</li>'+(cs.map(c=>{ const on=online.has(c.otherId); return `<li><button class="item${isOwner(c.otherUsername)?' owner-item':''}" data-user="${c.otherId}">${avatar(c.title,on,c.otherAvatar,isOwner(c.otherUsername))}<div class="meta"><div class="name">${nameHtml(c.title,c.otherUsername)}</div><div class="st ${on?'on':''}"><i></i>${on?'В сети':'Не в сети'}</div></div></button></li>`; }).join('')||`<li class="muted" style="padding:20px">${q?'Среди контактов никого нет. Введи ещё символ, чтобы искать по всем пользователям.':'Контактов пока нет. Найди человека по @username и напиши ему.'}</li>`);
   }
   $('contact-list').innerHTML=html;
 }
@@ -239,7 +255,7 @@ async function startDirectChat(userId, title) {
 }
 async function openChat(chat) {
   cancelEdit(); current=chat; replyTo=null; $('reply-bar').hidden=true; $('room').hidden=false; $('empty').hidden=true;
-  setAv('room-av',chat.title,'',chat.otherAvatar); $('card').hidden=true; $('room-title').textContent=chat.title;
+  const ow=chat.type!=='group'&&isOwner(chat.otherUsername); setAv('room-av',chat.title,'',chat.otherAvatar,ow); $('card').hidden=true; $('room-title').innerHTML=nameHtml(chat.title,ow?'owner':'');
   $('room-sub').textContent=chat.type==='group'?'Группа':'KotakApp'; $('app').dataset.view='room';
   updateRoomStatus();
   if(!roomPushed){ history.pushState({room:1},''); roomPushed=true; }
@@ -528,8 +544,8 @@ $('g-create').onclick=createGroup;
 /* ---- аватар: свой профиль ---- */
 function paintMe(){
   const n=me.display_name||me.username, url=me.avatar_url||'';
-  setAv('me-av',n,'big',url); setAv('tab-av',n,'tav',url);
-  $('me-name').textContent=n; $('me-user').textContent='@'+me.username;
+  const ow=isOwner(me.username); setAv('me-av',n,'big',url,ow); setAv('tab-av',n,'tav',url,ow);
+  $('me-name').innerHTML=nameHtml(n,me.username); $('me-user').textContent='@'+me.username;
   const b=$('me-bio'); b.textContent=me.bio||'Добавьте описание: Профиль → Изменить'; b.classList.toggle('empty',!me.bio);
   $('av-view').hidden=!url; $('av-remove').hidden=!url; $('av-change').textContent=url?'Изменить фото':'Добавить фото';
 }
@@ -575,12 +591,12 @@ function openCard(){
 function closeCardUI(){ if(cardPushed) history.back(); else $('card').hidden=true; }
 function renderCard(){
   const c=currentChat(); if(!c) return; const g=c.type==='group';
-  setAv('card-av',c.title,'huge',g?'':(c.otherAvatar||''));
-  $('card-name').textContent=c.title; updateRoomStatus();
+  const ow=!g&&isOwner(c.otherUsername); setAv('card-av',c.title,'huge',g?'':(c.otherAvatar||''),ow);
+  $('card-name').innerHTML=nameHtml(c.title,ow?'owner':''); updateRoomStatus();
   const people=(c.participants||[]).filter(x=>x.user_id!==me.id);
   $('card-info').innerHTML=g
-    ? `<div class="irow"><small>Участники · ${(c.participants||[]).length}</small></div>`+(c.participants||[]).map(x=>{ const p=x.profiles||{}; const n=x.user_id===me.id?'Вы':(p.display_name||p.username||'Участник'); return `<div class="mrow">${avatar(n,false,p.avatar_url)}<div><div>${esc(n)}</div><small>@${esc(p.username||'')}</small></div></div>`; }).join('')
-    : (people[0]?.profiles?.bio?`<div class="irow"><div class="bio">${esc(people[0].profiles.bio)}</div><small>О себе</small></div>`:'')+`<div class="irow"><div>@${esc(c.otherUsername||people[0]?.profiles?.username||'')}</div><small>Имя пользователя</small></div>`;
+    ? `<div class="irow"><small>Участники · ${(c.participants||[]).length}</small></div>`+(c.participants||[]).map(x=>{ const p=x.profiles||{}; const n=x.user_id===me.id?'Вы':(p.display_name||p.username||'Участник'); return `<div class="mrow">${avatar(n,false,p.avatar_url,isOwner(p.username))}<div><div>${nameHtml(n,p.username)}</div><small>@${esc(p.username||'')}</small></div></div>`; }).join('')
+    : (ow?`<div class="irow own-row"><div>${VB_SVG.replace('<svg','<svg class="vbi"')} Создатель KotakApp</div><small>Официальный аккаунт владельца</small></div>`:'')+(people[0]?.profiles?.bio?`<div class="irow"><div class="bio">${esc(people[0].profiles.bio)}</div><small>О себе</small></div>`:'')+`<div class="irow"><div>@${esc(c.otherUsername||people[0]?.profiles?.username||'')}</div><small>Имя пользователя</small></div>`;
   document.querySelectorAll('#card-seg button').forEach(b=>b.classList.toggle('on',b.dataset.s===cardTab));
   renderCardBody();
 }
@@ -847,7 +863,7 @@ async function togglePush(){
     toast('Уведомления включены'); updatePushBtn();
   }catch(e){ toast('Уведомления: '+(e.message||e)); }
 }
-const APP_VERSION='19';
+const APP_VERSION='20';
 async function runDiag(){
   const out=[]; const t=async(name,fn)=>{ try{ const r=await fn(); out.push((r&&r.error?'❌ ':'✅ ')+name+(r&&r.error?': '+r.error.message:'')); }catch(e){ out.push('❌ '+name+': '+(e.message||e)); } };
   await t('messages.reply_to_id',()=>client.from('messages').select('id,reply_to_id').limit(1));

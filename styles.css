@@ -320,3 +320,21 @@ html.amoled .chat{background:#000}
 .tk p{margin:10px 0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px}
 .tka{display:flex;gap:8px;flex-wrap:wrap}.tka button{padding:8px 14px;border-radius:12px;background:#168bff1f;box-shadow:inset 0 0 0 1px #168bff44;font-size:13.5px;font-weight:600}
 .tka button[data-tk=del]{color:#ff6b6b;background:#ff4d4d14;box-shadow:inset 0 0 0 1px #ff4d4d44}
+
+/* ---- v20: создатель (owner) ---- */
+.vbadge{display:inline-flex;vertical-align:-.18em;width:1.1em;height:1.1em;margin-left:.3em;cursor:pointer;flex:none;filter:drop-shadow(0 0 6px #f5c45188);-webkit-tap-highlight-color:transparent}
+.vbadge svg,.own-ic svg,.vbi{width:100%;height:100%}
+.vb-bg{fill:#f5c451}.vb-ck{fill:none;stroke:#3a2600;stroke-width:2.400;stroke-linecap:round;stroke-linejoin:round}
+.vbi{width:1.15em;height:1.15em;vertical-align:-.22em;margin-right:.25em}
+.avatar.owner{box-shadow:0 0 0 2px var(--bg),0 0 0 4px #f5c451,0 0 20px #f5c45177}
+.avatar.owner.huge,.avatar.owner.big{box-shadow:0 0 0 3px var(--bg),0 0 0 6px #f5c451,0 0 38px #f5c45188}
+.avatar.owner.tav{box-shadow:0 0 0 1.500px #f5c451}
+.item.owner-item{background:linear-gradient(100deg,#f5c4511f,#168bff14 70%,transparent);box-shadow:inset 0 0 0 1px #f5c4513d}
+.item.owner-item .name{background:linear-gradient(90deg,#ffe29a,#f5c451);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.item.owner-item .name .vbadge{-webkit-text-fill-color:initial}
+.own-row{color:#f5c451}.own-row small{color:var(--mu)}
+.own-ov{position:fixed;inset:0;z-index:300;background:#000a;display:grid;place-items:center;padding:20px}
+.own-card{width:100%;max-width:340px;background:var(--s2);border:1px solid #f5c4515c;border-radius:26px;padding:26px 22px 20px;text-align:center;display:flex;flex-direction:column;gap:10px;box-shadow:0 0 40px #f5c45133}
+.own-ic{width:64px;height:64px;margin:0 auto 4px;filter:drop-shadow(0 0 14px #f5c451aa)}
+.own-card h3{font:700 22px var(--f);color:#f5c451}.own-card p{font-size:15px;line-height:1.4;color:#dfe6f3}
+.own-btn{padding:13px;border-radius:16px;background:var(--s3);color:#fff;font:600 16px var(--f)}.own-btn.pri{background:#f5c451;color:#3a2600}

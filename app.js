@@ -75,6 +75,7 @@ async function loadSession() {
   markDelivered();
   startRealtime();
   startPresence();
+  cleanupMedia();
 }
 
 async function loadHidden(){
@@ -135,6 +136,7 @@ function noteTyping(){
 document.addEventListener('visibilitychange',()=>{
   if(me&&pres){ if(document.visibilityState==='visible') pres.track({typing_in:null}); else { stopTyping(); pres.untrack(); } }
   if(document.visibilityState!=='visible'||!me) return;
+  cleanupMedia();
   loadChats().then(()=>{ markDelivered(); if(current){ loadMessages().then(()=>markRead(current.id)).catch(()=>{}); } }).catch(()=>{});
 });
 async function loadChats() {
@@ -194,7 +196,7 @@ function renderChats() {
   const q=$('q').value.trim().toLowerCase();
   $('chat-list').innerHTML=chats.filter(c=>c.title.toLowerCase().includes(q)&&(!unreadOnly||unreadOf(c)>0)).map(c=>{
     const n=unreadOf(c), typing=isTyping(c), mineLast=!!c.last&&c.last.sender_id===me.id&&!c.last.deleted_at;
-    const prev=typing?'печатает…':c.last?(c.last.deleted_at?'🚫 Сообщение удалено':c.last.message_type==='voice'?'🎤 Голосовое':esc(c.last.content||'Вложение')):'Сообщений пока нет';
+    const prev=typing?'печатает…':c.last?(c.last.deleted_at?'🚫 Сообщение удалено':c.last.message_type==='voice'?'🎤 Голосовое':c.last.message_type==='image'?'📷 Фото':c.last.message_type==='video'?'🎬 Видео':esc(c.last.content||'Вложение')):'Сообщений пока нет';
     const tk=mineLast?`<span class="tick ${tickFor(c,c.last.created_at)}">${tickSvg(tickFor(c,c.last.created_at))}</span>`:'';
     return `<li><button class="item ${current?.id===c.id?'on':''}" data-chat="${c.id}">${avatar(c.title,c.type==='direct'&&online.has(c.otherId),c.type==='direct'?c.otherAvatar:'')}<div class="meta"><div class="row"><span class="name">${esc(c.title)}</span><span class="when ${n?'new':''}">${tk}${c.last?time(c.last.created_at):''}</span></div><div class="row2"><div class="last ${typing?'typing':''}">${prev}</div>${badge(c)}</div></div></button></li>`;
   }).join('')||`<li class="muted" style="padding:20px">${unreadOnly?'Непрочитанных чатов нет.':'Чатов пока нет. Найди друзей во вкладке «Контакты».'}</li>`;
@@ -228,7 +230,7 @@ async function openChat(chat) {
   markRead(chat.id);
 }
 const nameOf=uid=>{ if(uid===me.id) return 'Вы'; const p=(currentChat()?.participants||[]).find(x=>x.user_id===uid)?.profiles; return p?.display_name||p?.username||'Участник'; };
-const previewOf=m=>m?(m.deleted_at?'Сообщение удалено':m.message_type==='voice'?'🎤 Голосовое':String(m.content||'Вложение').slice(0,90)):'Сообщение';
+const previewOf=m=>m?(m.deleted_at?'Сообщение удалено':m.message_type==='voice'?'🎤 Голосовое':m.message_type==='image'?'📷 Фото':m.message_type==='video'?'🎬 Видео':String(m.content||'Вложение').slice(0,90)):'Сообщение';
 function quoteHtml(id){ const o=msgMap.get(id); return `<div class="q" data-goto="${esc(id)}"><b>${o?esc(nameOf(o.sender_id)):'Ответ'}</b> ${esc(previewOf(o))}</div>`; }
 async function fillQuote(div,id){
   if(msgMap.has(id)) return;
@@ -245,11 +247,14 @@ function fillMessage(div,m){
   }
   const body=(m.message_type==='voice'&&m.media_path)
     ? `<div class="vm"><button type="button" class="vplay" data-path="${esc(m.media_path)}" data-ms="${Number(m.media_duration_ms)||0}" aria-label="Воспроизвести">▶</button><div class="vbar"><i></i></div><span class="vdur">${fmtDur(m.media_duration_ms)}</span></div>`
-    : esc(m.content||'');
+    : (m.message_type==='image'||m.message_type==='video')
+      ? (m.media_deleted_at?'<div class="del">🕓 Файл удалён (срок хранения истёк)</div>':`<div class="media" data-path="${esc(m.media_path)}" data-kind="${m.message_type}"></div>`)+(m.content?`<div class="cap">${esc(m.content)}</div>`:'')
+      : esc(m.content||'');
   const who=(current?.type==='group'&&!mine)?`<div class="who">${esc(nameOf(m.sender_id))}</div>`:'';
   const quote=m.reply_to_id?quoteHtml(m.reply_to_id):'';
   div.innerHTML=`${who}${quote}${body}<div class="t">${m.edited_at?'<span class="ed">изм.</span>':''}<span class="tm">${time(m.created_at)}</span>${mine?' <span class="tick"></span>':''}</div><div class="rx"></div>`;
   if(mine) paintTick(div.querySelector('.tick'),m.created_at);
+  div.querySelectorAll('.media').forEach(loadMedia);
   if(m.reply_to_id) fillQuote(div,m.reply_to_id).catch(()=>{});
   renderReactions(m.id);
 }
@@ -330,7 +335,7 @@ async function sendMessage(event) {
 }
 const fmtDur=ms=>{ const s=Math.round((Number(ms)||0)/1000); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); };
 function syncBtns(){ if(rec) return; const has=$('text').value.trim().length>0; $('mic').hidden=has; $('send-btn').hidden=!has; }
-function setRecUI(on){ $('text').hidden=on; $('recbar').hidden=!on; if(on){ $('mic').hidden=true; $('send-btn').hidden=false; } else syncBtns(); }
+function setRecUI(on){ $('text').hidden=on; $('attach').hidden=on; $('recbar').hidden=!on; if(on){ $('mic').hidden=true; $('send-btn').hidden=false; } else syncBtns(); }
 
 let rec=null;
 async function startRecording(){
@@ -424,12 +429,14 @@ $('msgs').onclick=e=>{
   const pb=e.target.closest('.vplay'); if(pb){ toggleVoice(pb); return; }
   const chip=e.target.closest('.rxc'); if(chip){ toggleReaction(chip.dataset.mid,chip.dataset.e); return; }
   const q=e.target.closest('.q'); if(q){ const t=$('msgs').querySelector(`[data-id="${q.dataset.goto}"]`); if(t){ t.scrollIntoView({block:'center',behavior:'smooth'}); t.classList.add('flash'); setTimeout(()=>t.classList.remove('flash'),1200); } return; }
+  if(e.target.closest('video')) return;
+  const im=e.target.closest('.media img'); if(im){ openLightbox('image',im.closest('.media').dataset.path); return; }
   const m=e.target.closest('.m'); if(!m) return;
   const msg=msgMap.get(m.dataset.id); target={id:m.dataset.id,msg};
   $('react-row').querySelectorAll('button').forEach(b=>b.classList.toggle('on',reactions.some(r=>r.message_id===target.id&&r.user_id===me.id&&r.emoji===b.dataset.e)));
   const mine=msg?.sender_id===me.id, del=!!msg?.deleted_at;
   $('react-row').hidden=del; $('act-reply').hidden=del;
-  $('act-edit').hidden=!(mine&&!del&&msg.message_type!=='voice'); $('act-del-all').hidden=!(mine&&!del);
+  $('act-edit').hidden=!(mine&&!del&&!['voice','image','video'].includes(msg.message_type)); $('act-del-all').hidden=!(mine&&!del);
   $('sheet').hidden=false;
 };
 $('react-row').onclick=e=>{ const b=e.target.closest('[data-e]'); if(!b||!target) return; $('sheet').hidden=true; toggleReaction(target.id,b.dataset.e); };
@@ -569,7 +576,10 @@ function renderCardBody(){
   const list=[...msgMap.values()].filter(m=>!m.deleted_at&&!hiddenIds.has(m.id)).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
   const when=v=>new Date(v).toLocaleDateString('ru',{day:'numeric',month:'short'})+', '+time(v);
   let html='';
-  if(cardTab==='media') html='<p class="cempty">Фото и видео пока нельзя отправлять. Они появятся здесь, когда мы добавим эту функцию.</p>';
+  if(cardTab==='media'){
+    const items=list.filter(m=>(m.message_type==='image'||m.message_type==='video')&&m.media_path&&!m.media_deleted_at);
+    html=items.length?`<div class="mgrid">${items.map(m=>`<button type="button" class="mthumb" data-path="${esc(m.media_path)}" data-kind="${m.message_type}" aria-label="${m.message_type==='video'?'Видео':'Фото'}"></button>`).join('')}</div><p class="cempty">Файлы хранятся 15 дней, затем удаляются.</p>`:'<p class="cempty">Фото и видео в этом чате пока нет. Файлы хранятся 15 дней.</p>';
+  }
   else if(cardTab==='links'){
     const seen=new Set(), out=[];
     for(const m of list){ for(const u of (String(m.content||'').match(/https?:\/\/[^\s<>"']+/g)||[])){ if(!seen.has(u)){ seen.add(u); out.push([u,m.created_at]); } } }
@@ -578,12 +588,96 @@ function renderCardBody(){
     html=list.filter(m=>m.message_type==='voice'&&m.media_path).map(m=>`<div class="vrow"><div class="vm"><button type="button" class="vplay" data-path="${esc(m.media_path)}" data-ms="${Number(m.media_duration_ms)||0}" aria-label="Воспроизвести">▶</button><div class="vbar"><i></i></div><span class="vdur">${fmtDur(m.media_duration_ms)}</span></div><small>${esc(nameOf(m.sender_id))} · ${when(m.created_at)}</small></div>`).join('')||'<p class="cempty">Голосовых сообщений пока нет.</p>';
   }
   $('card-body').innerHTML=html;
+  $('card-body').querySelectorAll('.mthumb').forEach(loadThumb);
 }
 $('room-head').onclick=e=>{ if(e.target.closest('.back')) return; openCard(); };
 $('card-back').onclick=closeCardUI;
 $('card-seg').onclick=e=>{ const b=e.target.closest('[data-s]'); if(!b) return; cardTab=b.dataset.s; document.querySelectorAll('#card-seg button').forEach(x=>x.classList.toggle('on',x===b)); renderCardBody(); };
-$('card-body').onclick=e=>{ const pb=e.target.closest('.vplay'); if(pb) toggleVoice(pb); };
+$('card-body').onclick=e=>{ const pb=e.target.closest('.vplay'); if(pb) toggleVoice(pb); const t=e.target.closest('.mthumb'); if(t) openLightbox(t.dataset.kind,t.dataset.path); };
 $('card-actions').onclick=e=>{ const b=e.target.closest('[data-act]'); if(!b) return; if(b.dataset.act==='chat') closeCardUI(); else toast('Скоро будет'); };
+
+
+/* ---- фото и видео ---- */
+const urlCache=new Map();
+async function mediaUrl(path){
+  const c=urlCache.get(path); if(c&&c.exp>Date.now()) return c.url;
+  const {data,error}=await client.storage.from('media').createSignedUrl(path,3600); if(error) throw error;
+  urlCache.set(path,{url:data.signedUrl,exp:Date.now()+3300000}); return data.signedUrl;
+}
+async function loadMedia(box){
+  if(box.dataset.done) return; box.dataset.done='1';
+  try{
+    const url=await mediaUrl(box.dataset.path);
+    box.classList.add('ok');
+    if(box.dataset.kind==='image'){
+      box.innerHTML=`<img src="${esc(url)}" alt="Фото">`;
+      box.querySelector('img').addEventListener('load',()=>{ const ms=$('msgs'); if(box.closest('.m')===ms.lastElementChild) ms.scrollTop=1e9; });
+    } else box.innerHTML=`<video src="${esc(url)}#t=0.1" controls playsinline preload="metadata"></video>`;
+  }catch(e){ box.innerHTML='<span class="muted small">Не удалось загрузить</span>'; }
+}
+async function loadThumb(t){
+  try{
+    const url=await mediaUrl(t.dataset.path);
+    if(t.dataset.kind==='image') t.style.backgroundImage=`url("${url}")`;
+    else t.innerHTML=`<video src="${esc(url)}#t=0.1" preload="metadata" muted playsinline></video><i class="pl">▶</i>`;
+  }catch(e){}
+}
+async function openLightbox(kind,path){
+  try{
+    const url=await mediaUrl(path);
+    $('lb-body').innerHTML=kind==='video'?`<video src="${esc(url)}" controls autoplay playsinline></video>`:`<img src="${esc(url)}" alt="Фото">`;
+    $('lb').hidden=false;
+  }catch(e){ toast('Не удалось открыть: '+(e.message||e)); }
+}
+function closeLightbox(){ $('lb').hidden=true; $('lb-body').innerHTML=''; }
+$('lb-x').onclick=closeLightbox;
+$('lb').onclick=e=>{ if(e.target===$('lb')||e.target===$('lb-body')) closeLightbox(); };
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&!$('lb').hidden) closeLightbox(); });
+async function resizeJpeg(file,max=1600){
+  const bmp=await createImageBitmap(file); const k=Math.min(1,max/Math.max(bmp.width,bmp.height));
+  const c=document.createElement('canvas'); c.width=Math.round(bmp.width*k); c.height=Math.round(bmp.height*k);
+  c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);
+  return new Promise((res,rej)=>c.toBlob(b=>b?res(b):rej(new Error('Не удалось обработать фото')),'image/jpeg',.82));
+}
+async function sendMedia(file){
+  if(!file||!current||!me) return;
+  if(editing) return toast('Сначала закончите изменение сообщения');
+  const isImg=file.type.startsWith('image/'), isVid=file.type.startsWith('video/');
+  if(!isImg&&!isVid) return toast('Можно отправлять только фото и видео');
+  if(isVid&&file.size>50*1024*1024) return toast('Видео больше 50 МБ. Выберите покороче.');
+  const convId=current.id, caption=$('text').value.trim(), rid=replyTo?.id||null;
+  $('attach').disabled=true; toast('Отправляю…');
+  try{
+    let blob=file, type=file.type, ext;
+    if(isImg){ blob=await resizeJpeg(file); type='image/jpeg'; ext='jpg'; }
+    else ext=((file.name||'').split('.').pop()||'mp4').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,5)||'mp4';
+    const path=`${convId}/${me.id}/${Date.now()}.${ext}`;
+    const up=await client.storage.from('media').upload(path,blob,{contentType:type});
+    if(up.error) throw up.error;
+    const row={conversation_id:convId,sender_id:me.id,content:caption,message_type:isImg?'image':'video',media_path:path};
+    if(rid) row.reply_to_id=rid;
+    const {data,error}=await client.from('messages').insert(row).select().single();
+    if(error){ client.storage.from('media').remove([path]).catch(()=>{}); throw error; }
+    $('text').value=''; $('text').style.height='auto'; stopTyping(); syncBtns(); replyTo=null; $('reply-bar').hidden=true;
+    appendMessage(data); loadChats().catch(()=>{}); toast('Отправлено');
+  }catch(e){ toast('Вложение не отправлено: '+(e.message||e)); }
+  finally{ $('attach').disabled=false; }
+}
+$('attach').onclick=()=>$('media-file').click();
+$('media-file').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; sendMedia(f); };
+
+/* автоудаление файлов старше 15 дней */
+let lastClean=0;
+async function cleanupMedia(){
+  if(!me||Date.now()-lastClean<3600000) return; lastClean=Date.now();
+  try{
+    const {data:paths,error}=await client.rpc('media_to_expire'); if(error||!paths?.length) return;
+    const {data:rm,error:e2}=await client.storage.from('media').remove(paths); if(e2) return;
+    const done=(rm||[]).map(f=>f.name); if(!done.length) return;
+    await client.rpc('media_mark_expired',{paths:done});
+    if(current) loadMessages().catch(()=>{}); loadChats().catch(()=>{});
+  }catch(e){ console.warn('cleanup',e); }
+}
 
 const pushSupported=()=>'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -610,7 +704,7 @@ async function togglePush(){
   }catch(e){ toast('Уведомления: '+(e.message||e)); }
 }
 $('push-btn').onclick=togglePush;
-const APP_VERSION='14';
+const APP_VERSION='15';
 $('ver').textContent='Версия приложения: '+APP_VERSION;
 async function runDiag(){
   const out=[]; const t=async(name,fn)=>{ try{ const r=await fn(); out.push((r&&r.error?'❌ ':'✅ ')+name+(r&&r.error?': '+r.error.message:'')); }catch(e){ out.push('❌ '+name+': '+(e.message||e)); } };

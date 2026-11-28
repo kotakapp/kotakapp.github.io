@@ -13,12 +13,12 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=14">
+<link rel="stylesheet" href="styles.css?v=15">
 </head>
 <body>
 <script>
 (function(){try{
-  var V='14',k='kotak_ver';
+  var V='15',k='kotak_ver';
   if(localStorage.getItem(k)!==V){
     localStorage.setItem(k,V);
     var jobs=[];
@@ -73,7 +73,7 @@
       <header class="room-head" id="room-head"><button class="back" id="back" aria-label="Назад"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button><div class="avatar" id="room-av"></div><div><div class="title" id="room-title"></div><div class="muted small" id="room-sub">KotakApp</div></div></header>
       <div class="msgs" id="msgs"></div>
       <div class="reply-bar" id="reply-bar" hidden><span id="reply-text"></span><button id="reply-x" aria-label="Отменить ответ">×</button></div>
-      <form class="composer" id="composer" autocomplete="off"><textarea id="text" name="kotak-msg" rows="1" placeholder="Сообщение" autocomplete="off" maxlength="5000" enterkeyhint="send" data-lpignore="true" data-form-type="other"></textarea><div class="recbar" id="recbar" hidden><button type="button" id="rec-cancel" aria-label="Отменить запись">✕</button><span class="recdot"></span><span id="rec-time">0:00</span></div><button type="button" class="mic" id="mic" aria-label="Записать голосовое"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button><button class="send" id="send-btn" aria-label="Отправить" hidden><svg viewBox="0 0 24 24"><path d="M12 19V5M5.500 11.500L12 5l6.500 6.500"/></svg></button></form>
+      <form class="composer" id="composer" autocomplete="off"><button type="button" class="attach" id="attach" aria-label="Прикрепить фото или видео"><svg viewBox="0 0 24 24"><path d="M20 11.500l-8 8a5 5 0 0 1-7-7l8.500-8.500a3.300 3.300 0 0 1 4.700 4.700l-8.500 8.500a1.700 1.700 0 0 1-2.400-2.400L15 7"/></svg></button><input type="file" id="media-file" accept="image/*,video/*" hidden><textarea id="text" name="kotak-msg" rows="1" placeholder="Сообщение" autocomplete="off" maxlength="5000" enterkeyhint="send" data-lpignore="true" data-form-type="other"></textarea><div class="recbar" id="recbar" hidden><button type="button" id="rec-cancel" aria-label="Отменить запись">✕</button><span class="recdot"></span><span id="rec-time">0:00</span></div><button type="button" class="mic" id="mic" aria-label="Записать голосовое"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button><button class="send" id="send-btn" aria-label="Отправить" hidden><svg viewBox="0 0 24 24"><path d="M12 19V5M5.500 11.500L12 5l6.500 6.500"/></svg></button></form>
     </section>
 <section class="card" id="card" hidden>
       <div class="card-top"><button type="button" class="round" id="card-back" aria-label="Назад"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button></div>
@@ -94,11 +94,12 @@
   <button type="button" class="primary" id="g-create">Создать группу</button>
   <button type="button" id="g-cancel" class="muted">Отмена</button>
 </div></div>
+<div class="lb" id="lb" hidden><button type="button" class="round" id="lb-x" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button><div class="lb-body" id="lb-body"></div></div>
 <div class="toast" id="toast" role="status"></div>
 <div class="sheet" id="sheet" hidden><div class="sheet-body"><div class="react-row" id="react-row"></div><button id="act-reply">Ответить</button><button id="act-edit">Изменить</button><button id="act-del-me">Удалить у меня</button><button id="act-del-all">Удалить у всех</button><button id="act-close" class="muted">Закрыть</button></div></div>
 <script>
 (function(){
-  var V='14', st={ok:{},err:[]};
+  var V='15', st={ok:{},err:[]};
   addEventListener('error',function(e){ st.err.push(e.message||'error'); });
   addEventListener('unhandledrejection',function(e){ st.err.push(String((e.reason&&e.reason.message)||e.reason)); });
   function load(src,ms){ return new Promise(function(res){

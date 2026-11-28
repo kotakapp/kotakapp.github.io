@@ -18,7 +18,9 @@ s=s.replace(/(<style name="AppTheme\.NoActionBar"[^>]*>)/,'$1\n        <item nam
 const res=path.join(A,'src/main/res'); const sizes={mdpi:48,hdpi:72,xhdpi:96,xxhdpi:144,xxxhdpi:192};
 fs.rmSync(path.join(res,'mipmap-anydpi-v26'),{recursive:true,force:true});
 for(const [d,px] of Object.entries(sizes)){ const dir=path.join(res,'mipmap-'+d); fs.mkdirSync(dir,{recursive:true});
-  for(const n of ['ic_launcher','ic_launcher_round','ic_launcher_foreground']) cp.execFileSync('convert',[path.join(root,'icon-512.png'),'-resize',px+'x'+px,path.join(dir,n+'.png')]); }
+  for(const n of ['ic_launcher','ic_launcher_round','ic_launcher_foreground']){ const dst=path.join(dir,n+'.png'); let ok=false;
+    for(const bin of ['magick','convert']){ if(ok) break; try{ cp.execFileSync(bin,[path.join(root,'icon-512.png'),'-resize',px+'x'+px,dst],{stdio:'ignore'}); ok=true; }catch(e){} }
+    if(!ok) fs.copyFileSync(path.join(root,px>96?'icon-192.png':'icon-192.png'),dst); } }
 // Firebase (push): положи google-services.json в корень репозитория или передай секретом в CI
 const gs=path.join(root,'google-services.json'); if(fs.existsSync(gs)) fs.copyFileSync(gs,path.join(A,'google-services.json'));
 console.log('android patched, version',ver);

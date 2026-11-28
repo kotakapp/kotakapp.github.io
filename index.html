@@ -13,12 +13,12 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=26">
+<link rel="stylesheet" href="styles.css?v=27">
 </head>
 <body>
 <script>
 (function(){try{
-  var V='26',k='kotak_ver';
+  var V='27',k='kotak_ver';
   if(localStorage.getItem(k)!==V){
     localStorage.setItem(k,V);
     var jobs=[];
@@ -126,7 +126,7 @@
 <div class="sheet" id="sheet" hidden><div class="sheet-body"><div class="react-row" id="react-row"></div><button id="act-reply">Ответить</button><button id="act-edit">Изменить</button><button id="act-del-me">Удалить у меня</button><button id="act-del-all">Удалить у всех</button><button id="act-close" class="muted">Закрыть</button></div></div>
 <script>
 (function(){
-  var V='26', st={ok:{},err:[]};
+  var V='27', st={ok:{},err:[]};
   addEventListener('error',function(e){ st.err.push(e.message||'error'); });
   addEventListener('unhandledrejection',function(e){ st.err.push(String((e.reason&&e.reason.message)||e.reason)); });
   function load(src,ms){ return new Promise(function(res){

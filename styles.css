@@ -338,3 +338,6 @@ html.amoled .chat{background:#000}
 .own-ic{width:64px;height:64px;margin:0 auto 4px;filter:drop-shadow(0 0 14px #f5c451aa)}
 .own-card h3{font:700 22px var(--f);color:#f5c451}.own-card p{font-size:15px;line-height:1.4;color:#dfe6f3}
 .own-btn{padding:13px;border-radius:16px;background:var(--s3);color:#fff;font:600 16px var(--f)}.own-btn.pri{background:#f5c451;color:#3a2600}
+
+/* v21: политика */
+.pol{padding:6px 18px 14px}.pol h4{font:700 16px var(--f);margin:16px 0 4px;color:#fff}.pol p{font-size:15px;line-height:1.5;color:#c9d3e6}

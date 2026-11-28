@@ -863,7 +863,7 @@ async function togglePush(){
     toast('Уведомления включены'); updatePushBtn();
   }catch(e){ toast('Уведомления: '+(e.message||e)); }
 }
-const APP_VERSION='20';
+const APP_VERSION='21';
 async function runDiag(){
   const out=[]; const t=async(name,fn)=>{ try{ const r=await fn(); out.push((r&&r.error?'❌ ':'✅ ')+name+(r&&r.error?': '+r.error.message:'')); }catch(e){ out.push('❌ '+name+': '+(e.message||e)); } };
   await t('messages.reply_to_id',()=>client.from('messages').select('id,reply_to_id').limit(1));
@@ -916,6 +916,19 @@ const IC={
 const ico=n=>`<svg viewBox="0 0 24 24">${IC[n]||''}</svg>`;
 const CHEV='<svg class="chev" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg>';
 const CHECK='<svg class="chev" style="color:var(--ac)" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></svg>';
+const POLICY=[
+['Кто мы','KotakApp — небольшой мессенджер. Его делает и поддерживает один человек — владелец аккаунта @owner. Связаться можно в приложении: Настройки → О приложении → Поддержка.'],
+['Какие данные мы храним','Имя пользователя (username), отображаемое имя, описание профиля и фото, если вы их добавили. Ваши сообщения, реакции, ответы, голосовые, фото и видео. Дату регистрации и последнего входа. Список заблокированных вами людей и ваши настройки приватности. Обращения, которые вы отправили через «Сообщить об ошибке» или «Предложить улучшение». Если включены push-уведомления, то технический адрес подписки вашего устройства.'],
+['Чего мы не собираем','Мы не просим телефон и настоящий email: вход идёт по username. Мы не продаём данные и не показываем рекламу.'],
+['Пароль','Пароль хранится в Supabase только в виде необратимого хеша. Владелец приложения не может его увидеть или восстановить.'],
+['Где хранятся данные','Данные лежат у сторонних сервисов: база, файлы и вход — в Supabase, сайт размещён на GitHub Pages. Они обрабатывают данные по своим правилам. Сообщения хранятся на сервере и сейчас не защищены сквозным шифрованием.'],
+['Фото, видео и голосовые','Файлы в чатах автоматически удаляются с сервера через 15 дней после отправки. Фото профиля хранится, пока вы его не удалите или не замените.'],
+['Кто что видит','Ваши сообщения видят участники чата. Ваш username и имя видны другим пользователям при поиске. Статус «в сети» можно скрыть: Настройки → Конфиденциальность. Там же можно ограничить, кто может вам писать, и заблокировать пользователя. Владелец приложения имеет доступ к списку аккаунтов (username, даты регистрации и входа) и к обращениям в поддержку. Читать вашу переписку он не собирается и не использует её.'],
+['Данные на вашем устройстве','Часть настроек (тема, размер текста, обои, звук, мьют чатов) хранится только в вашем браузере и на сервер не отправляется.'],
+['Ваши права','Вы можете изменить имя, username, описание и фото в профиле, удалить своё сообщение и заблокировать пользователя. Если хотите удалить аккаунт и данные полностью, напишите в поддержку. Автоматического удаления аккаунта в приложении пока нет.'],
+['Дети','KotakApp не предназначен для детей младше 13 лет.'],
+['Изменения','Если правила изменятся, мы обновим этот текст и дату вверху страницы.'],
+];
 const SETTINGS=[
   {id:'account',t:'Аккаунт',i:'user',rows:[{t:'Управление профилем',i:'user',go:'edit'},{t:'Выйти из аккаунта',i:'out',act:'logout',danger:1}]},
   {id:'privacy',t:'Конфиденциальность',i:'lock',rows:[{t:'Видимость статуса',vf:()=>PVL.privacy_status[me?.privacy_status||'all']||'Все',go:'pv-status'},{t:'Кто может писать',vf:()=>PVL.privacy_write[me?.privacy_write||'all']||'Все',go:'pv-write'},{t:'Видимость профиля',v:'Все',soon:1},{t:'Чёрный список',go:'blocklist'},{t:'Блокировка пользователей',go:'blockuser'}]},
@@ -923,7 +936,7 @@ const SETTINGS=[
   {id:'chats',t:'Настройки чатов',i:'chat',rows:[{t:'Размер текста',seg:'fs'},{t:'Обои',go:'wp'},{t:'Тема',seg:'theme'},{t:'Автовоспроизведение видео',sw:1,act:'autoplay'},{t:'Автозагрузка медиа',sw:1,act:'autoload'},{t:'Отображение времени сообщений',sw:1,act:'time'}]},
   {id:'data',t:'Данные и память',i:'db',rows:[{t:'Мои файлы в чатах',go:'files'}]},
   {id:'lang',t:'Язык',i:'globe',rows:[{t:'Русский',chk:1},{t:'Қазақша',soon:1},{t:'English',soon:1}]},
-  {id:'about',t:'О приложении',i:'info',about:1,rows:[{t:'Поддержка',go:'support'},{t:'Политика конфиденциальности',soon:1}]},
+  {id:'about',t:'О приложении',i:'info',about:1,rows:[{t:'Поддержка',go:'support'},{t:'Политика конфиденциальности',go:'policy'}]},
   {id:'help',t:'Помощь',i:'help',rows:[{t:'Разработчик',go:'support'},{t:'FAQ',go:'faq'},{t:'Сообщить об ошибке',go:'fb-bug'},{t:'Предложить улучшение',go:'fb-idea'},{t:'Проверить базу данных',act:'diag',chev:1}]}
 ];
 const SWD={snd:'1',prev:'1',vib:'1',autoplay:'0',autoload:'1',time:'1'};
@@ -1025,6 +1038,7 @@ SETTINGS.push(
    b.innerHTML=(ps||[]).map(u=>uRow(u,`<button type="button" class="go" data-unblock="${u.id}">Разблокировать</button>`)).join('');
  }},
  {id:'blockuser',t:'Блокировка пользователей',parent:'privacy',hidden:1,custom:()=>'<p class="tiny muted" style="padding:0 6px">Заблокированный не сможет писать тебе в личку, а ты ему, пока не разблокируешь. В группах блок не действует.</p><label class="fld"><span>Username</span><input id="bl-q" placeholder="@username" autocomplete="off" autocapitalize="off" spellcheck="false"></label><div class="card2" id="bl-res">'+msg0('Введи минимум 2 символа.')+'</div>'},
+ {id:'policy',t:'Политика конфиденциальности',parent:'about',hidden:1,custom:()=>'<p class="tiny muted" style="padding:0 6px">Обновлено: 28 ноября 2026</p><div class="card2 pol">'+POLICY.map(([h,t])=>`<h4>${h}</h4><p>${t}</p>`).join('')+'</div>'},
  {id:'support',t:'Поддержка',parent:'about',hidden:1,rows:[{t:'Написать владельцу в KotakApp',i:'chat',act:'owner-chat'},{t:'Telegram @parabellumkz',i:'help',url:'https://t.me/parabellumkz'},{t:'Сообщить об ошибке',i:'info',go:'fb-bug'},{t:'Предложить улучшение',i:'info',go:'fb-idea'}]},
  {id:'admin',t:'Админ-панель',i:'shield',admin:1,rows:[{t:'Пользователи',i:'user',go:'adm-users'},{t:'Онлайн и лог',i:'info',go:'adm-live'},{t:'Обращения в поддержку',i:'help',go:'adm-tickets',vf:()=>{ const n=tickets.filter(t=>t.status!=='done').length; return n?'Новых: '+n:''; }},{t:'SQL Editor (Supabase)',i:'db',url:sbUrl('/sql/new')},{t:'Table Editor',i:'db',url:sbUrl('/editor')},{t:'Auth → Users',i:'db',url:sbUrl('/auth/users')},{t:'Проект Supabase',i:'db',url:sbUrl('')}]},
  {id:'adm-users',t:'Пользователи',parent:'admin',hidden:1,custom:()=>'<p class="tiny muted" style="padding:0 6px">Пароли в Supabase хранятся только в виде необратимого хеша: посмотреть их нельзя, приложение их не получает. Сбросить пароль можно в Supabase → Authentication → Users.</p><div class="card2" id="adm-box">'+msg0('Загружаю…')+'</div>',after:async()=>{

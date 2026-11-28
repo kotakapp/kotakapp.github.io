@@ -310,3 +310,13 @@ html.amoled{--bg:#000;--s1:#050505;--s2:#0a0d14}
 html.amoled .side,html.amoled .page{background:#000}
 html.amoled .stick{background:linear-gradient(180deg,#000 82%,#0000)}
 html.amoled .chat{background:#000}
+
+/* v19 */
+.srow .avatar{width:44px;height:44px;font-size:18px;box-shadow:0 0 0 1.5px #168bff88}
+.srow .tx small{display:block;font-size:12.5px;font-weight:400;margin-top:2px}
+.srow .go{flex:none;font-size:13px;font-weight:600;color:var(--ac);padding:7px 12px;border-radius:14px;background:#168bff1f;box-shadow:inset 0 0 0 1px #168bff44}
+.ond{display:inline-block;width:9px;height:9px;border-radius:50%;background:#22d366;box-shadow:0 0 8px #22d366;margin-left:6px}
+.tk{padding:14px 16px}.tk.done{opacity:.55}.tkh{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.tkh .small{margin-left:auto}
+.tk p{margin:10px 0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px}
+.tka{display:flex;gap:8px;flex-wrap:wrap}.tka button{padding:8px 14px;border-radius:12px;background:#168bff1f;box-shadow:inset 0 0 0 1px #168bff44;font-size:13.5px;font-weight:600}
+.tka button[data-tk=del]{color:#ff6b6b;background:#ff4d4d14;box-shadow:inset 0 0 0 1px #ff4d4d44}

@@ -75,6 +75,7 @@ async function loadSession() {
   startPresence();
   startCalls();
   cleanupMedia();
+  checkAdmin();
 }
 
 async function loadHidden(){
@@ -108,9 +109,11 @@ const isTyping=c=>c.type==='direct'&&c.otherId&&typingMap[c.otherId]===c.id;
 function startPresence(){
   if(pres||!me) return;
   pres=client.channel('presence-online',{config:{presence:{key:me.id}}});
+  pres._raw=pres.track.bind(pres); pres.track=p=>me.privacy_status==='nobody'?Promise.resolve('ok'):pres._raw(p);
   pres.on('presence',{event:'sync'},()=>{
-    const st=pres.presenceState(); online=new Set(); typingMap={};
+    const st=pres.presenceState(); const prevOn=online; online=new Set(); typingMap={};
     for(const [uid,metas] of Object.entries(st)){ online.add(uid); const t=metas.map(x=>x.typing_in).filter(Boolean).pop(); if(t) typingMap[uid]=t; }
+    if(isAdm) logPresence(prevOn);
     renderChats(); updateRoomStatus();
   }).subscribe(async status=>{ if(status==='SUBSCRIBED') await pres.track({typing_in:null}); });
 }
@@ -417,7 +420,7 @@ function setTab(tab) {
   $('side').dataset.tab=tab;
   document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab));
 }
-async function logout() { if(call) endCall('remote',true); await stopCalls(); await stopRealtime(); await stopPresence(); await client.auth.signOut(); current=null; chats=[]; $('app').hidden=true; $('auth-wrap').hidden=false; setAuthMode('login'); }
+async function logout() { isAdm=false; admUsers=[]; tickets=[]; adminLog=[]; if(admCh){ client.removeChannel(admCh); admCh=null; } renderSettingsMain(); if(call) endCall('remote',true); await stopCalls(); await stopRealtime(); await stopPresence(); await client.auth.signOut(); current=null; chats=[]; $('app').hidden=true; $('auth-wrap').hidden=false; setAuthMode('login'); }
 $('auth-form').addEventListener('submit',authSubmit);
 $('auth-switch').onclick=()=>setAuthMode(authMode==='login'?'register':'login');
 $('tabs').onclick=e=>{const b=e.target.closest('button[data-tab]');if(b)setTab(b.dataset.tab);};
@@ -844,7 +847,7 @@ async function togglePush(){
     toast('Уведомления включены'); updatePushBtn();
   }catch(e){ toast('Уведомления: '+(e.message||e)); }
 }
-const APP_VERSION='18';
+const APP_VERSION='19';
 async function runDiag(){
   const out=[]; const t=async(name,fn)=>{ try{ const r=await fn(); out.push((r&&r.error?'❌ ':'✅ ')+name+(r&&r.error?': '+r.error.message:'')); }catch(e){ out.push('❌ '+name+': '+(e.message||e)); } };
   await t('messages.reply_to_id',()=>client.from('messages').select('id,reply_to_id').limit(1));
@@ -891,6 +894,7 @@ const IC={
   globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>',
   info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
   help:'<circle cx="12" cy="12" r="9"/><path d="M9.500 9.500a2.500 2.500 0 1 1 3.500 2.300c-.7.400-1 .9-1 1.700M12 17h.01"/>',
+  shield:'<path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z"/><path d="m9 12 2 2 4-4"/>',
   out:'<path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M15 8l4 4-4 4M19 12H9"/>'
 };
 const ico=n=>`<svg viewBox="0 0 24 24">${IC[n]||''}</svg>`;
@@ -898,13 +902,13 @@ const CHEV='<svg class="chev" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg>
 const CHECK='<svg class="chev" style="color:var(--ac)" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></svg>';
 const SETTINGS=[
   {id:'account',t:'Аккаунт',i:'user',rows:[{t:'Управление профилем',i:'user',go:'edit'},{t:'Выйти из аккаунта',i:'out',act:'logout',danger:1}]},
-  {id:'privacy',t:'Конфиденциальность',i:'lock',rows:[{t:'Видимость статуса',v:'Все',soon:1},{t:'Кто может писать',v:'Все',soon:1},{t:'Видимость профиля',v:'Все',soon:1},{t:'Чёрный список',soon:1},{t:'Блокировка пользователей',soon:1}]},
+  {id:'privacy',t:'Конфиденциальность',i:'lock',rows:[{t:'Видимость статуса',vf:()=>PVL.privacy_status[me?.privacy_status||'all']||'Все',go:'pv-status'},{t:'Кто может писать',vf:()=>PVL.privacy_write[me?.privacy_write||'all']||'Все',go:'pv-write'},{t:'Видимость профиля',v:'Все',soon:1},{t:'Чёрный список',go:'blocklist'},{t:'Блокировка пользователей',go:'blockuser'}]},
   {id:'notif',t:'Уведомления',i:'bell',rows:[{t:'Новые сообщения',sw:1,act:'push'},{t:'Звук сообщений',sw:1,act:'snd'},{t:'Предпросмотр текста',sw:1,act:'prev'},{t:'Вибрация',sw:1,act:'vib'},{t:'Уведомления отдельных чатов',go:'mute'}]},
   {id:'chats',t:'Настройки чатов',i:'chat',rows:[{t:'Размер текста',seg:'fs'},{t:'Обои',go:'wp'},{t:'Тема',seg:'theme'},{t:'Автовоспроизведение видео',sw:1,act:'autoplay'},{t:'Автозагрузка медиа',sw:1,act:'autoload'},{t:'Отображение времени сообщений',sw:1,act:'time'}]},
   {id:'data',t:'Данные и память',i:'db',rows:[{t:'Мои файлы в чатах',go:'files'}]},
   {id:'lang',t:'Язык',i:'globe',rows:[{t:'Русский',chk:1},{t:'Қазақша',soon:1},{t:'English',soon:1}]},
-  {id:'about',t:'О приложении',i:'info',about:1,rows:[{t:'Поддержка',soon:1},{t:'Политика конфиденциальности',soon:1}]},
-  {id:'help',t:'Помощь',i:'help',rows:[{t:'Разработчик',soon:1},{t:'FAQ',go:'faq'},{t:'Сообщить об ошибке',go:'fb-bug'},{t:'Предложить улучшение',go:'fb-idea'},{t:'Проверить базу данных',act:'diag',chev:1}]}
+  {id:'about',t:'О приложении',i:'info',about:1,rows:[{t:'Поддержка',go:'support'},{t:'Политика конфиденциальности',soon:1}]},
+  {id:'help',t:'Помощь',i:'help',rows:[{t:'Разработчик',go:'support'},{t:'FAQ',go:'faq'},{t:'Сообщить об ошибке',go:'fb-bug'},{t:'Предложить улучшение',go:'fb-idea'},{t:'Проверить базу данных',act:'diag',chev:1}]}
 ];
 const SWD={snd:'1',prev:'1',vib:'1',autoplay:'0',autoload:'1',time:'1'};
 const SEGS={fs:[['s','Мелкий'],['m','Обычный'],['l','Крупный']],theme:[['dark','Синяя'],['amoled','Чёрная']]};
@@ -936,8 +940,9 @@ function rowHtml(r){
   else if(r.act==='push'&&!pushAvail) right='<span class="val">Недоступно</span>';
   else if(r.sw) right=`<span class="sw ${swOn(r.act)?'on':''}"></span>`;
   else if(r.chk) right=CHECK;
-  else if(r.go||r.chev) right=CHEV;
-  return `<button type="button" class="srow ${r.soon?'soon':''} ${r.danger?'danger':''}" data-act="${r.act||''}" data-go="${r.go||''}" ${r.soon?'data-soon="1"':''}>${ic}<span class="tx">${r.t}</span>${right}</button>`;
+  else if(r.vf) right=`<span class="val">${r.vf()}</span>`+CHEV;
+  else if(r.go||r.chev||r.url) right=CHEV;
+  return `<button type="button" class="srow ${r.soon?'soon':''} ${r.danger?'danger':''}" data-act="${r.act||''}" data-go="${r.go||''}" data-url="${r.url||''}" ${r.soon?'data-soon="1"':''}>${ic}<span class="tx">${r.t}</span>${right}</button>`;
 }
 function renderPage(){
   const s=SETTINGS.find(x=>x.id===curPage); if(!s) return; $('sp-title').textContent=s.t;
@@ -949,15 +954,23 @@ function openSettings(id){
   const s=SETTINGS.find(x=>x.id===id); if(!s) return;
   curPage=id; $('sp-title').textContent=s.t; renderPage(); if($('spage').hidden) openPage($('spage'));
 }
-$('settings-main').innerHTML='<div class="card2">'+SETTINGS.filter(s=>!s.hidden).map(s=>`<button type="button" class="srow" data-open="${s.id}"><span class="ic">${ico(s.i)}</span><span class="tx">${s.t}</span>${s.id==='lang'?'<span class="val">Русский</span>':''}${CHEV}</button>`).join('')+'</div>';
+let isAdm=false, admUsers=[], adminLog=[], tickets=[], admCh=null, admSeen=false;
+function renderSettingsMain(){ $('settings-main').innerHTML='<div class="card2">'+SETTINGS.filter(s=>!s.hidden&&(!s.admin||isAdm)).map(s=>`<button type="button" class="srow" data-open="${s.id}"><span class="ic">${ico(s.i)}</span><span class="tx">${s.t}</span>${s.id==='lang'?'<span class="val">Русский</span>':''}${CHEV}</button>`).join('')+'</div>'; }
+renderSettingsMain();
 $('settings-main').onclick=e=>{ const b=e.target.closest('[data-open]'); if(b) openSettings(b.dataset.open); };
 $('sp-body').onclick=async e=>{
   const sg=e.target.closest('[data-seg]'); if(sg){ setPref(sg.dataset.seg,sg.dataset.v); applyPrefs(); return renderPage(); }
   const wp=e.target.closest('[data-wp]'); if(wp){ setPref('wp',wp.dataset.wp); applyPrefs(); return renderPage(); }
   const mu=e.target.closest('[data-mute]'); if(mu){ const s=mutedSet(), id=mu.dataset.mute; s.has(id)?s.delete(id):s.add(id); setPref('muted',JSON.stringify([...s])); return renderPage(); }
   const fb=e.target.closest('#fb-send'); if(fb){ return sendFeedback(fb); }
+  const pv=e.target.closest('[data-pv]'); if(pv) return setPrivacy(pv.dataset.pv,pv.dataset.v);
+  const ub=e.target.closest('[data-unblock]'); if(ub) return unblock(ub.dataset.unblock);
+  const bk=e.target.closest('[data-block]'); if(bk) return blockUser(bk.dataset.block,bk);
+  const tk=e.target.closest('[data-tk]'); if(tk) return ticketAct(tk.dataset.tk,tk.dataset.id,tk.dataset.name);
   const b=e.target.closest('.srow'); if(!b) return;
   if(b.dataset.soon) return toast('Эта функция скоро появится');
+  if(b.dataset.url) return window.open(b.dataset.url,'_blank','noopener');
+  if(b.dataset.act==='owner-chat') return chatWithOwner();
   const a=b.dataset.act, g=b.dataset.go;
   if(g==='edit') return openEdit();
   if(g) return openSettings(g);
@@ -973,9 +986,106 @@ async function sendFeedback(btn){
     const {error}=await client.from('feedback').insert({kind:btn.dataset.kind,text,app_version:APP_VERSION});
     if(error) throw error;
     toast('Спасибо, отправлено'); $('fb-text').value='';
-  }catch(e){ toast('Не отправлено: '+(e.message||e)+(/feedback/.test(e.message||'')?' (выполни kotak-sql-v17.sql в Supabase)':'')); }
+  }catch(e){ toast('Не отправлено: '+(e.message||e)+(/feedback/.test(e.message||'')?' (выполни SQL из чата в Supabase)':'')); }
   finally{ btn.disabled=false; }
 }
+
+/* ---- v19: приватность, блокировки, поддержка, админ-панель owner ---- */
+const PVL={privacy_status:{all:'Все',nobody:'Никто'},privacy_write:{all:'Все',replied:'Только после моего сообщения'}};
+const sbUrl=p=>{ try{ return 'https://supabase.com/dashboard/project/'+new URL(cfg.SUPABASE_URL).hostname.split('.')[0]+p; }catch(e){ return 'https://supabase.com/dashboard'; } };
+const dt=v=>v?new Date(v).toLocaleString('ru',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+const radioPage=(id,t,col,opts,note)=>({id,t,parent:'privacy',hidden:1,custom:()=>`<p class="tiny muted" style="padding:0 6px">${note}</p><div class="card2">`+opts.map(([k,n])=>`<button type="button" class="srow" data-pv="${col}" data-v="${k}"><span class="tx">${n}</span>${(me?.[col]||'all')===k?CHECK:''}</button>`).join('')+'</div>'});
+const uRow=(u,btn)=>`<div class="srow">${avatar(u.display_name||u.username,false,u.avatar_url)}<span class="tx">${esc(u.display_name||u.username)}<small class="muted">@${esc(u.username)}</small></span>${btn}</div>`;
+const msg0=t=>`<p class="muted" style="padding:18px">${t}</p>`;
+const nameById=id=>{ const u=admUsers.find(x=>x.id===id); return u?'@'+u.username:(id===me?.id?'@'+me.username:String(id).slice(0,8)); };
+SETTINGS.push(
+ radioPage('pv-status','Видимость статуса','privacy_status',[['all','Все'],['nobody','Никто']],'Если выбрано «Никто», другие не увидят твоё «в сети» и «печатает…». Ты сам тоже не будешь отображаться онлайн для других.'),
+ radioPage('pv-write','Кто может писать','privacy_write',[['all','Все'],['replied','Только после моего сообщения']],'«Только после моего сообщения»: в личных чатах тебе смогут отвечать, но новые чужие чаты не смогут написать первыми. Проверяется на сервере. Группы не затрагиваются.'),
+ {id:'blocklist',t:'Чёрный список',parent:'privacy',hidden:1,custom:()=>'<div class="card2" id="bl-box">'+msg0('Загружаю…')+'</div>',after:async()=>{
+   const {data:bl,error}=await client.from('blocks').select('blocked_id').eq('blocker_id',me.id); const b=$('bl-box'); if(!b||curPage!=='blocklist') return;
+   if(error){ b.innerHTML=msg0('Не загрузилось: '+esc(error.message)); return; }
+   if(!bl.length){ b.innerHTML=msg0('Список пуст.'); return; }
+   const {data:ps}=await client.from('profiles').select('id,username,display_name,avatar_url').in('id',bl.map(x=>x.blocked_id)); if(curPage!=='blocklist') return;
+   b.innerHTML=(ps||[]).map(u=>uRow(u,`<button type="button" class="go" data-unblock="${u.id}">Разблокировать</button>`)).join('');
+ }},
+ {id:'blockuser',t:'Блокировка пользователей',parent:'privacy',hidden:1,custom:()=>'<p class="tiny muted" style="padding:0 6px">Заблокированный не сможет писать тебе в личку, а ты ему, пока не разблокируешь. В группах блок не действует.</p><label class="fld"><span>Username</span><input id="bl-q" placeholder="@username" autocomplete="off" autocapitalize="off" spellcheck="false"></label><div class="card2" id="bl-res">'+msg0('Введи минимум 2 символа.')+'</div>'},
+ {id:'support',t:'Поддержка',parent:'about',hidden:1,rows:[{t:'Написать владельцу в KotakApp',i:'chat',act:'owner-chat'},{t:'Telegram @parabellumkz',i:'help',url:'https://t.me/parabellumkz'},{t:'Сообщить об ошибке',i:'info',go:'fb-bug'},{t:'Предложить улучшение',i:'info',go:'fb-idea'}]},
+ {id:'admin',t:'Админ-панель',i:'shield',admin:1,rows:[{t:'Пользователи',i:'user',go:'adm-users'},{t:'Онлайн и лог',i:'info',go:'adm-live'},{t:'Обращения в поддержку',i:'help',go:'adm-tickets',vf:()=>{ const n=tickets.filter(t=>t.status!=='done').length; return n?'Новых: '+n:''; }},{t:'SQL Editor (Supabase)',i:'db',url:sbUrl('/sql/new')},{t:'Table Editor',i:'db',url:sbUrl('/editor')},{t:'Auth → Users',i:'db',url:sbUrl('/auth/users')},{t:'Проект Supabase',i:'db',url:sbUrl('')}]},
+ {id:'adm-users',t:'Пользователи',parent:'admin',hidden:1,custom:()=>'<p class="tiny muted" style="padding:0 6px">Пароли в Supabase хранятся только в виде необратимого хеша: посмотреть их нельзя, приложение их не получает. Сбросить пароль можно в Supabase → Authentication → Users.</p><div class="card2" id="adm-box">'+msg0('Загружаю…')+'</div>',after:async()=>{
+   let err=''; try{ await loadAdmUsers(); }catch(e){ err=e.message||String(e); } const b=$('adm-box'); if(!b||curPage!=='adm-users') return;
+   b.innerHTML=err?msg0('Ошибка: '+esc(err)+'. Выполнены ли SQL и добавлен ли owner в app_admins?'):`<div class="srow"><span class="tx">Всего аккаунтов</span><span class="val">${admUsers.length}</span></div>`+admUsers.map(u=>`<div class="srow"><span class="tx">${esc(u.display_name||u.username)} ${online.has(u.id)?'<i class="ond"></i>':''}<small class="muted">@${esc(u.username)} · рег. ${dt(u.created_at)} · вход ${dt(u.last_sign_in_at)}</small></span></div>`).join('');
+ }},
+ {id:'adm-live',t:'Онлайн и лог',parent:'admin',hidden:1,custom:()=>`<div class="card2"><div class="srow"><span class="tx">Сейчас онлайн</span><span class="val">${online.size}</span></div>`+[...online].map(id=>`<div class="srow"><span class="tx">${esc(nameById(id))}</span><i class="ond"></i></div>`).join('')+'</div><p class="tiny muted" style="padding:0 6px">Лог за текущий сеанс: входы и выходы, регистрации, обращения. Текст переписок не показывается.</p><div class="card2">'+(adminLog.map(l=>`<div class="srow"><span class="tx">${esc(l.text)}<small class="muted">${new Date(l.t).toLocaleTimeString('ru')}</small></span></div>`).join('')||msg0('Пока пусто.'))+'</div>'},
+ {id:'adm-tickets',t:'Обращения',parent:'admin',hidden:1,custom:()=>'<div id="tk-box">'+ticketsHtml()+'</div>',after:async()=>{ try{ await loadTickets(); }catch(e){ const b=$('tk-box'); if(b) b.innerHTML='<div class="card2">'+msg0('Ошибка: '+esc(e.message||e))+'</div>'; return; } const b=$('tk-box'); if(b&&curPage==='adm-tickets') b.innerHTML=ticketsHtml(); }}
+);
+function ticketsHtml(){
+  if(!tickets.length) return '<div class="card2">'+msg0('Обращений пока нет.')+'</div>';
+  return tickets.map(t=>{ const n=t.u?(t.u.display_name||t.u.username):'аноним'; return `<div class="card2 tk ${t.status==='done'?'done':''}"><div class="tkh"><span class="pill">${t.kind==='bug'?'Ошибка':'Идея'}</span><b>${esc(n)}${t.u?' @'+esc(t.u.username):''}</b><span class="muted small">${dt(t.created_at)}</span></div><p>${esc(t.text)}</p><div class="tka"><button type="button" data-tk="chat" data-id="${t.user_id}" data-name="${esc(n)}">Написать</button><button type="button" data-tk="done" data-id="${t.id}">${t.status==='done'?'Вернуть':'Готово'}</button><button type="button" data-tk="del" data-id="${t.id}">Удалить</button></div></div>`; }).join('');
+}
+async function loadAdmUsers(){ const {data,error}=await client.rpc('admin_users'); if(error) throw error; admUsers=data||[]; return admUsers; }
+async function loadTickets(){
+  const {data,error}=await client.from('feedback').select('*').order('created_at',{ascending:false}).limit(100); if(error) throw error;
+  const ids=[...new Set((data||[]).map(x=>x.user_id))], names={};
+  if(ids.length){ const {data:ps}=await client.from('profiles').select('id,username,display_name').in('id',ids); (ps||[]).forEach(p=>names[p.id]=p); }
+  tickets=(data||[]).map(x=>({...x,u:names[x.user_id]})); return tickets;
+}
+function closeAllPages(){ document.querySelectorAll('.page').forEach(p=>p.hidden=true); pageDepth=0; }
+async function ticketAct(a,id,name){
+  try{
+    if(a==='chat'){ closeAllPages(); return startDirectChat(id,name); }
+    if(a==='done'){ const t=tickets.find(x=>String(x.id)===String(id)); const {error}=await client.from('feedback').update({status:t?.status==='done'?'new':'done'}).eq('id',id); if(error) throw error; }
+    if(a==='del'){ if(!confirm('Удалить обращение?')) return; const {error}=await client.from('feedback').delete().eq('id',id); if(error) throw error; }
+    await loadTickets(); renderPage();
+  }catch(e){ toast('Обращение: '+(e.message||e)); }
+}
+function logA(text){ adminLog.unshift({t:Date.now(),text}); adminLog.length=Math.min(adminLog.length,100); if(!$('spage').hidden&&curPage==='adm-live') renderPage(); }
+function logPresence(prev){
+  if(!prev.size&&!admSeen){ admSeen=true; return; } admSeen=true;
+  online.forEach(id=>{ if(!prev.has(id)) logA('🟢 '+nameById(id)+' в сети'); });
+  prev.forEach(id=>{ if(!online.has(id)) logA('⚪ '+nameById(id)+' вышел'); });
+}
+function startAdminLog(){
+  if(admCh||!isAdm) return;
+  admCh=client.channel('admin-log')
+   .on('postgres_changes',{event:'INSERT',schema:'public',table:'profiles'},p=>{ logA('🆕 Регистрация @'+(p.new.username||'?')); loadAdmUsers().catch(()=>{}); })
+   .on('postgres_changes',{event:'INSERT',schema:'public',table:'feedback'},p=>{ logA('📩 Обращение: '+(p.new.kind==='bug'?'ошибка':'идея')); toast('Новое обращение в поддержку'); loadTickets().then(renderPageIf).catch(()=>{}); })
+   .subscribe();
+}
+async function checkAdmin(){
+  if(!me||me.username!=='owner') return;
+  try{ const {data,error}=await client.rpc('is_admin'); if(error||!data) return;
+    isAdm=true; renderSettingsMain(); await loadAdmUsers().catch(()=>{}); loadTickets().then(renderPageIf).catch(()=>{}); startAdminLog();
+  }catch(e){}
+}
+async function chatWithOwner(){
+  const {data,error}=await client.from('profiles').select('id,username,display_name').eq('username','owner').maybeSingle();
+  if(error||!data) return toast('Аккаунт owner не найден');
+  if(data.id===me.id) return toast('Это твой аккаунт');
+  closeAllPages(); startDirectChat(data.id,data.display_name||data.username);
+}
+async function setPrivacy(col,v){
+  const {error}=await client.from('profiles').update({[col]:v}).eq('id',me.id);
+  if(error) return toast('Не сохранено: '+error.message+' (выполни SQL из чата в Supabase)');
+  me[col]=v; if(col==='privacy_status') applyStatusVisibility(); renderPage();
+}
+function applyStatusVisibility(){ if(!pres) return; if(me.privacy_status==='nobody') pres.untrack(); else pres.track({typing_in:null}); }
+async function blockUser(id,btn){
+  const {error}=await client.from('blocks').insert({blocker_id:me.id,blocked_id:id});
+  if(error&&error.code!=='23505') return toast('Не заблокирован: '+error.message+' (выполни SQL из чата в Supabase)');
+  toast('Пользователь заблокирован'); if(btn){ btn.textContent='Заблокирован'; btn.disabled=true; }
+}
+async function unblock(id){ const {error}=await client.from('blocks').delete().eq('blocker_id',me.id).eq('blocked_id',id); if(error) return toast(error.message); toast('Разблокирован'); renderPage(); }
+let blTimer=null;
+$('sp-body').oninput=e=>{
+  if(e.target.id!=='bl-q') return; const el=e.target; clearTimeout(blTimer);
+  blTimer=setTimeout(async()=>{
+    const q=el.value.trim().replace(/^@/,'').toLowerCase(), box=$('bl-res'); if(!box) return;
+    if(q.length<2){ box.innerHTML=msg0('Введи минимум 2 символа.'); return; }
+    const {data,error}=await client.from('profiles').select('id,username,display_name,avatar_url').ilike('username',`%${q}%`).neq('id',me.id).limit(15);
+    if(!$('bl-res')||q!==el.value.trim().replace(/^@/,'').toLowerCase()) return;
+    box.innerHTML=error?msg0(esc(error.message)):((data||[]).map(u=>uRow(u,`<button type="button" class="go" data-block="${u.id}">Заблокировать</button>`)).join('')||msg0('Не найдено.'));
+  },300);
+};
 $('sp-back').onclick=()=>{ const s=SETTINGS.find(x=>x.id===curPage); if(s?.parent&&!$('spage').hidden) openSettings(s.parent); else closePage(); }; $('ep-back').onclick=closePage;
 
 /* профиль */

@@ -88,7 +88,7 @@ function startRealtime(){
   rt=client.channel('inbox').on('postgres_changes',{event:'INSERT',schema:'public',table:'messages'},payload=>{
     const m=payload.new;
     if(current && m.conversation_id===current.id){ appendMessage(m); if(m.sender_id!==me.id && document.visibilityState==='visible') markRead(current.id); }
-    if(m.sender_id!==me.id) markDelivered();
+    if(m.sender_id!==me.id){ markDelivered(); notifyIncoming(m); }
     clearTimeout(window.rtTimer); window.rtTimer=setTimeout(()=>loadChats().catch(()=>{}),300);
   }).on('postgres_changes',{event:'UPDATE',schema:'public',table:'conversation_members'},payload=>{
     const r=payload.new; const chat=chats.find(c=>c.id===r.conversation_id); const p=chat?.participants.find(x=>x.user_id===r.user_id);
@@ -441,6 +441,7 @@ $('add-contact').onclick=()=>$('user-search').focus();
 $('fab').onclick=()=>{ setTab('contacts'); $('user-search').focus(); };
 $('react-row').innerHTML=EMOJI.map(x=>`<button data-e="${x}">${x}</button>`).join('');
 $('msgs').onclick=e=>{
+  const ph=e.target.closest('.mph'); if(ph){ const box=ph.closest('.media'); delete box.dataset.done; box.dataset.manual='1'; loadMedia(box); return; }
   const pb=e.target.closest('.vplay'); if(pb){ toggleVoice(pb); return; }
   const chip=e.target.closest('.rxc'); if(chip){ toggleReaction(chip.dataset.mid,chip.dataset.e); return; }
   const q=e.target.closest('.q'); if(q){ const t=$('msgs').querySelector(`[data-id="${q.dataset.goto}"]`); if(t){ t.scrollIntoView({block:'center',behavior:'smooth'}); t.classList.add('flash'); setTimeout(()=>t.classList.remove('flash'),1200); } return; }
@@ -613,14 +614,16 @@ async function mediaUrl(path){
   urlCache.set(path,{url:data.signedUrl,exp:Date.now()+3300000}); return data.signedUrl;
 }
 async function loadMedia(box){
-  if(box.dataset.done) return; box.dataset.done='1';
+  if(box.dataset.done) return;
+  if(pref('autoload','1')==='0'&&!box.dataset.manual){ box.dataset.done='1'; box.innerHTML=`<button type="button" class="mph">${box.dataset.kind==='video'?'🎬 Загрузить видео':'📷 Загрузить фото'}</button>`; return; }
+  box.dataset.done='1';
   try{
     const url=await mediaUrl(box.dataset.path);
     box.classList.add('ok');
     if(box.dataset.kind==='image'){
       box.innerHTML=`<img src="${esc(url)}" alt="Фото">`;
       box.querySelector('img').addEventListener('load',()=>{ const ms=$('msgs'); if(box.closest('.m')===ms.lastElementChild) ms.scrollTop=1e9; });
-    } else box.innerHTML=`<video src="${esc(url)}#t=0.1" controls playsinline preload="metadata"></video>`;
+    } else box.innerHTML=`<video src="${esc(url)}#t=0.1" controls playsinline preload="metadata" ${pref('autoplay','0')==='1'?'autoplay muted loop':''}></video>`;
   }catch(e){ box.innerHTML='<span class="muted small">Не удалось загрузить</span>'; }
 }
 async function loadThumb(t){
@@ -841,7 +844,7 @@ async function togglePush(){
     toast('Уведомления включены'); updatePushBtn();
   }catch(e){ toast('Уведомления: '+(e.message||e)); }
 }
-const APP_VERSION='17';
+const APP_VERSION='18';
 async function runDiag(){
   const out=[]; const t=async(name,fn)=>{ try{ const r=await fn(); out.push((r&&r.error?'❌ ':'✅ ')+name+(r&&r.error?': '+r.error.message:'')); }catch(e){ out.push('❌ '+name+': '+(e.message||e)); } };
   await t('messages.reply_to_id',()=>client.from('messages').select('id,reply_to_id').limit(1));
@@ -858,8 +861,24 @@ const setPref=(k,v)=>{ try{ localStorage.setItem('kotak_'+k,v); }catch(e){} };
 function applyPrefs(){
   document.documentElement.style.setProperty('--msg-fs',({s:'14px',m:'16px',l:'18px'})[pref('fs','m')]||'16px');
   document.body.classList.toggle('hide-time',pref('time','1')==='0');
+  const w=WALLS.find(x=>x[0]===pref('wp','none')); document.documentElement.style.setProperty('--wp',w&&w[2]?w[2]:'none');
+  const am=pref('theme','dark')==='amoled'; document.documentElement.classList.toggle('amoled',am);
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content',am?'#000000':'#050914');
 }
-applyPrefs();
+let actx=null;
+function beep(){ try{ actx=actx||new (window.AudioContext||window.webkitAudioContext)(); actx.resume?.(); const t=actx.currentTime,o=actx.createOscillator(),g=actx.createGain(); o.type='sine'; o.frequency.setValueAtTime(880,t); o.frequency.exponentialRampToValueAtTime(1320,t+.08); g.gain.setValueAtTime(.0001,t); g.gain.exponentialRampToValueAtTime(.18,t+.02); g.gain.exponentialRampToValueAtTime(.0001,t+.25); o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t+.26); }catch(e){} }
+function notifyIncoming(m){
+  if(mutedSet().has(m.conversation_id)) return;
+  if(current&&m.conversation_id===current.id&&document.visibilityState==='visible') return;
+  if(pref('snd','1')==='1') beep();
+  if(pref('vib','1')==='1') navigator.vibrate?.(80);
+  if(document.visibilityState!=='visible') return;
+  const c=chats.find(x=>x.id===m.conversation_id);
+  if(pref('prev','1')!=='1'||!c) return toast('Новое сообщение');
+  const p=c.participants.find(x=>x.user_id===m.sender_id)?.profiles;
+  const body=m.message_type==='voice'?'🎤 Голосовое':m.message_type==='image'?'📷 Фото':m.message_type==='video'?'🎬 Видео':(m.content||'Вложение');
+  toast((c.type==='group'?c.title+' · '+(p?.display_name||p?.username||''):c.title)+': '+body.slice(0,80));
+}
 function openPage(el){ el.hidden=false; history.pushState({pg:1},''); pageDepth++; }
 const closePage=()=>{ if(pageDepth>0) history.back(); };
 const renderPageIf=()=>{ if(!$('spage').hidden) renderPage(); };
@@ -880,16 +899,37 @@ const CHECK='<svg class="chev" style="color:var(--ac)" viewBox="0 0 24 24"><path
 const SETTINGS=[
   {id:'account',t:'Аккаунт',i:'user',rows:[{t:'Управление профилем',i:'user',go:'edit'},{t:'Выйти из аккаунта',i:'out',act:'logout',danger:1}]},
   {id:'privacy',t:'Конфиденциальность',i:'lock',rows:[{t:'Видимость статуса',v:'Все',soon:1},{t:'Кто может писать',v:'Все',soon:1},{t:'Видимость профиля',v:'Все',soon:1},{t:'Чёрный список',soon:1},{t:'Блокировка пользователей',soon:1}]},
-  {id:'notif',t:'Уведомления',i:'bell',rows:[{t:'Новые сообщения',sw:1,act:'push'},{t:'Звук сообщений',sw:1,soon:1},{t:'Предпросмотр текста',sw:1,soon:1},{t:'Вибрация',sw:1,soon:1},{t:'Уведомления отдельных чатов',soon:1}]},
-  {id:'chats',t:'Настройки чатов',i:'chat',rows:[{t:'Размер текста',seg:1},{t:'Обои',soon:1},{t:'Тема',v:'Тёмная',soon:1},{t:'Автовоспроизведение видео',sw:1,soon:1},{t:'Автозагрузка медиа',sw:1,soon:1},{t:'Отображение времени сообщений',sw:1,act:'time'}]},
-  {id:'data',t:'Данные и память',i:'db',rows:[{t:'Управление файлами',soon:1}]},
+  {id:'notif',t:'Уведомления',i:'bell',rows:[{t:'Новые сообщения',sw:1,act:'push'},{t:'Звук сообщений',sw:1,act:'snd'},{t:'Предпросмотр текста',sw:1,act:'prev'},{t:'Вибрация',sw:1,act:'vib'},{t:'Уведомления отдельных чатов',go:'mute'}]},
+  {id:'chats',t:'Настройки чатов',i:'chat',rows:[{t:'Размер текста',seg:'fs'},{t:'Обои',go:'wp'},{t:'Тема',seg:'theme'},{t:'Автовоспроизведение видео',sw:1,act:'autoplay'},{t:'Автозагрузка медиа',sw:1,act:'autoload'},{t:'Отображение времени сообщений',sw:1,act:'time'}]},
+  {id:'data',t:'Данные и память',i:'db',rows:[{t:'Мои файлы в чатах',go:'files'}]},
   {id:'lang',t:'Язык',i:'globe',rows:[{t:'Русский',chk:1},{t:'Қазақша',soon:1},{t:'English',soon:1}]},
   {id:'about',t:'О приложении',i:'info',about:1,rows:[{t:'Поддержка',soon:1},{t:'Политика конфиденциальности',soon:1}]},
-  {id:'help',t:'Помощь',i:'help',rows:[{t:'Разработчик',soon:1},{t:'FAQ',soon:1},{t:'Сообщить об ошибке',soon:1},{t:'Предложить улучшение',soon:1},{t:'Проверить базу данных',act:'diag',chev:1}]}
+  {id:'help',t:'Помощь',i:'help',rows:[{t:'Разработчик',soon:1},{t:'FAQ',go:'faq'},{t:'Сообщить об ошибке',go:'fb-bug'},{t:'Предложить улучшение',go:'fb-idea'},{t:'Проверить базу данных',act:'diag',chev:1}]}
 ];
-const swOn=a=>a==='push'?pushOn:a==='time'?pref('time','1')!=='0':false;
+const SWD={snd:'1',prev:'1',vib:'1',autoplay:'0',autoload:'1',time:'1'};
+const SEGS={fs:[['s','Мелкий'],['m','Обычный'],['l','Крупный']],theme:[['dark','Синяя'],['amoled','Чёрная']]};
+const SEGD={fs:'m',theme:'dark'};
+const WALLS=[['none','Без обоев',''],['aurora','Аврора','radial-gradient(600px 400px at 15% 10%,#168bff40,transparent 60%),radial-gradient(500px 400px at 90% 95%,#00bfff2a,transparent 60%)'],['night','Ночь','linear-gradient(180deg,#050914,#0c1d44)'],['violet','Фиолет','linear-gradient(160deg,#0a0a1f,#1d1450 60%,#0b1a3a)'],['teal','Бирюза','linear-gradient(160deg,#04141a,#08404f)'],['graphite','Графит','#0b0d13']];
+const mutedSet=()=>{ try{ return new Set(JSON.parse(pref('muted','[]'))); }catch(e){ return new Set(); } };
+const FAQ=[['Как найти человека?','Вкладка «Контакты» → поиск по @username → кнопка «Написать».'],['Как создать группу?','В шапке списка чатов нажми ⋮ → «Новая группа», выбери участников по username.'],['Сколько хранятся фото и видео?','Файлы из чатов удаляются автоматически через 15 дней, текст остаётся.'],['Как сменить фото профиля?','Профиль → нажми на аватар → «Изменить фото».'],['Не приходят уведомления','Настройки → Уведомления → «Новые сообщения». На iPhone сначала добавь сайт на экран «Домой» (Поделиться → На экран Домой) и открой оттуда.'],['Можно ли восстановить пароль?','Пока нет: вход только по username и паролю. Запомни пароль.']];
+const fbBox=k=>`<div class="card2" style="padding:14px"><label class="fld"><span>${k==='bug'?'Что пошло не так?':'Что улучшить или добавить?'}</span><textarea id="fb-text" rows="6" maxlength="1500" placeholder="Опиши подробнее"></textarea></label></div><button type="button" class="primary" id="fb-send" data-kind="${k}">Отправить</button>`;
+SETTINGS.push(
+ {id:'mute',t:'Уведомления чатов',parent:'notif',hidden:1,custom:()=>{ const m=mutedSet(); return '<p class="tiny muted" style="padding:0 6px">Работает только в открытом приложении на этом устройстве: без звука, вибрации и всплывающих подсказок. Push-уведомления сервера это не отключает.</p><div class="card2">'+(chats.map(c=>`<button type="button" class="srow" data-mute="${c.id}"><span class="tx">${esc(c.title)}</span><span class="sw ${m.has(c.id)?'':'on'}"></span></button>`).join('')||'<p class="muted" style="padding:18px">Чатов пока нет.</p>')+'</div>'; }},
+ {id:'wp',t:'Обои',parent:'chats',hidden:1,custom:()=>{ const w=pref('wp','none'); return '<div class="wps">'+WALLS.map(([k,n,bg])=>`<button type="button" class="wp ${w===k?'on':''}" data-wp="${k}" style="background:${bg||'#0b1428'}"><span>${n}</span></button>`).join('')+'</div>'; }},
+ {id:'files',t:'Мои файлы в чатах',parent:'data',hidden:1,custom:()=>'<p class="tiny muted" style="padding:0 6px">Файлы, которые ты отправил и которые ещё хранятся. Через 15 дней после отправки они удаляются автоматически.</p><div class="card2" id="files-box"><p class="muted" style="padding:18px">Считаю…</p></div>',after:async()=>{
+   const T=[['image','Фото'],['video','Видео'],['voice','Голосовые']];
+   const r=await Promise.all(T.map(([t])=>client.from('messages').select('id',{count:'exact',head:true}).eq('sender_id',me.id).eq('message_type',t).is('media_deleted_at',null).not('media_path','is',null)));
+   const b=$('files-box'); if(!b||curPage!=='files') return;
+   b.innerHTML=T.map(([t,n],i)=>`<div class="srow"><span class="tx">${n}</span><span class="val">${r[i].error?'—':r[i].count||0}</span></div>`).join('');
+ }},
+ {id:'faq',t:'FAQ',parent:'help',hidden:1,custom:()=>'<div class="card2">'+FAQ.map(([q,a])=>`<details class="faq"><summary>${q}</summary><p>${a}</p></details>`).join('')+'</div>'},
+ {id:'fb-bug',t:'Сообщить об ошибке',parent:'help',hidden:1,custom:()=>fbBox('bug')},
+ {id:'fb-idea',t:'Предложить улучшение',parent:'help',hidden:1,custom:()=>fbBox('idea')}
+);
+applyPrefs();
+const swOn=a=>a==='push'?pushOn:pref(a,SWD[a])==='1';
 function rowHtml(r){
-  if(r.seg){ const f=pref('fs','m'); return `<div class="srow"><span class="tx">${r.t}</span><span class="segs">${[['s','Мелкий'],['m','Обычный'],['l','Крупный']].map(([k,n])=>`<button type="button" data-fs="${k}" class="${f===k?'on':''}">${n}</button>`).join('')}</span></div>`; }
+  if(r.seg){ const f=pref(r.seg,SEGD[r.seg]); return `<div class="srow"><span class="tx">${r.t}</span><span class="segs">${SEGS[r.seg].map(([k,n])=>`<button type="button" data-seg="${r.seg}" data-v="${k}" class="${f===k?'on':''}">${n}</button>`).join('')}</span></div>`; }
   const ic=r.i?`<span class="ic">${ico(r.i)}</span>`:'';
   let right='';
   if(r.soon) right=(r.v?`<span class="val">${r.v}</span>`:'')+'<span class="pill">Скоро</span>'+(r.sw?'<span class="sw"></span>':'');
@@ -900,28 +940,43 @@ function rowHtml(r){
   return `<button type="button" class="srow ${r.soon?'soon':''} ${r.danger?'danger':''}" data-act="${r.act||''}" data-go="${r.go||''}" ${r.soon?'data-soon="1"':''}>${ic}<span class="tx">${r.t}</span>${right}</button>`;
 }
 function renderPage(){
-  const s=SETTINGS.find(x=>x.id===curPage); if(!s) return;
+  const s=SETTINGS.find(x=>x.id===curPage); if(!s) return; $('sp-title').textContent=s.t;
   const head=s.about?`<div class="abt"><img src="logo-mark.png" alt="" width="90" height="87"><b>Kotak<span style="color:var(--pr)">App</span></b><span class="muted">Версия ${APP_VERSION}</span></div>`:'';
-  $('sp-body').innerHTML=head+'<div class="card2">'+s.rows.map(rowHtml).join('')+'</div>';
+  $('sp-body').innerHTML=s.custom?s.custom():head+'<div class="card2">'+s.rows.map(rowHtml).join('')+'</div>';
+  if(s.after) s.after().catch(()=>{});
 }
 function openSettings(id){
   const s=SETTINGS.find(x=>x.id===id); if(!s) return;
   curPage=id; $('sp-title').textContent=s.t; renderPage(); if($('spage').hidden) openPage($('spage'));
 }
-$('settings-main').innerHTML='<div class="card2">'+SETTINGS.map(s=>`<button type="button" class="srow" data-open="${s.id}"><span class="ic">${ico(s.i)}</span><span class="tx">${s.t}</span>${s.id==='lang'?'<span class="val">Русский</span>':''}${CHEV}</button>`).join('')+'</div>';
+$('settings-main').innerHTML='<div class="card2">'+SETTINGS.filter(s=>!s.hidden).map(s=>`<button type="button" class="srow" data-open="${s.id}"><span class="ic">${ico(s.i)}</span><span class="tx">${s.t}</span>${s.id==='lang'?'<span class="val">Русский</span>':''}${CHEV}</button>`).join('')+'</div>';
 $('settings-main').onclick=e=>{ const b=e.target.closest('[data-open]'); if(b) openSettings(b.dataset.open); };
 $('sp-body').onclick=async e=>{
-  const fs=e.target.closest('[data-fs]'); if(fs){ setPref('fs',fs.dataset.fs); applyPrefs(); return renderPage(); }
+  const sg=e.target.closest('[data-seg]'); if(sg){ setPref(sg.dataset.seg,sg.dataset.v); applyPrefs(); return renderPage(); }
+  const wp=e.target.closest('[data-wp]'); if(wp){ setPref('wp',wp.dataset.wp); applyPrefs(); return renderPage(); }
+  const mu=e.target.closest('[data-mute]'); if(mu){ const s=mutedSet(), id=mu.dataset.mute; s.has(id)?s.delete(id):s.add(id); setPref('muted',JSON.stringify([...s])); return renderPage(); }
+  const fb=e.target.closest('#fb-send'); if(fb){ return sendFeedback(fb); }
   const b=e.target.closest('.srow'); if(!b) return;
   if(b.dataset.soon) return toast('Эта функция скоро появится');
-  const a=b.dataset.act;
-  if(b.dataset.go==='edit') return openEdit();
+  const a=b.dataset.act, g=b.dataset.go;
+  if(g==='edit') return openEdit();
+  if(g) return openSettings(g);
   if(a==='logout'){ if(!confirm('Выйти из аккаунта?')) return; document.querySelectorAll('.page').forEach(p=>p.hidden=true); pageDepth=0; return logout(); }
   if(a==='push'){ if(!pushAvail) return toast('Уведомления недоступны в этом браузере'); return togglePush(); }
-  if(a==='time'){ setPref('time',pref('time','1')==='0'?'1':'0'); applyPrefs(); return renderPage(); }
+  if(a in SWD){ setPref(a,pref(a,SWD[a])==='1'?'0':'1'); if(a==='vib'&&pref('vib','1')==='1') navigator.vibrate?.(60); if(a==='snd'&&pref('snd','1')==='1') beep(); applyPrefs(); return renderPage(); }
   if(a==='diag') return runDiag();
 };
-$('sp-back').onclick=closePage; $('ep-back').onclick=closePage;
+async function sendFeedback(btn){
+  const text=($('fb-text').value||'').trim(); if(text.length<5) return toast('Напиши хотя бы пару слов');
+  btn.disabled=true;
+  try{
+    const {error}=await client.from('feedback').insert({kind:btn.dataset.kind,text,app_version:APP_VERSION});
+    if(error) throw error;
+    toast('Спасибо, отправлено'); $('fb-text').value='';
+  }catch(e){ toast('Не отправлено: '+(e.message||e)+(/feedback/.test(e.message||'')?' (выполни kotak-sql-v17.sql в Supabase)':'')); }
+  finally{ btn.disabled=false; }
+}
+$('sp-back').onclick=()=>{ const s=SETTINGS.find(x=>x.id===curPage); if(s?.parent&&!$('spage').hidden) openSettings(s.parent); else closePage(); }; $('ep-back').onclick=closePage;
 
 /* профиль */
 const setHint=(t,c)=>{ const h=$('ed-hint'); h.textContent=t; h.className='hint '+(c||''); };

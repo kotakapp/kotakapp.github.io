@@ -296,3 +296,17 @@ background:radial-gradient(900px 600px at 85% 110%,#168bff26,transparent 65%),ra
 .fld input:focus,.fld textarea:focus{box-shadow:inset 0 0 0 1.500px var(--pr),var(--glow)}
 .hint{font-size:12.500px;min-height:18px;margin:-6px 0 0;padding-left:4px;color:var(--mu)}.hint.ok{color:#22d366}.hint.bad{color:#ff6b6b}
 .m{font-size:var(--msg-fs,16px)}body.hide-time .m .tm{display:none}
+
+/* v17 пачка 2 */
+.msgs{background:var(--wp,none)}
+.mph{padding:14px 18px;border-radius:14px;background:#00000030;box-shadow:inset 0 0 0 1px #ffffff2a;font-weight:600;font-size:14px}
+.wps{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.wp{aspect-ratio:3/4;border-radius:16px;box-shadow:inset 0 0 0 1px var(--line2);display:grid;align-items:end;justify-items:center;padding:8px;font-size:12.5px;color:#dfe7f5}
+.wp.on{box-shadow:0 0 0 2px var(--pr),0 0 18px #168bff88}
+.faq{padding:14px 16px;position:relative}.faq+.faq{border-top:1px solid #168bff1c}
+.faq summary{font-weight:600;cursor:pointer;list-style:none}.faq summary::-webkit-details-marker{display:none}
+.faq p{margin-top:8px;color:var(--mu);font-size:14.5px;line-height:1.5}
+html.amoled{--bg:#000;--s1:#050505;--s2:#0a0d14}
+html.amoled .side,html.amoled .page{background:#000}
+html.amoled .stick{background:linear-gradient(180deg,#000 82%,#0000)}
+html.amoled .chat{background:#000}

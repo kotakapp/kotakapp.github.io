@@ -21,8 +21,8 @@ public class MainActivity extends BridgeActivity {
   }
 
   @Override protected void onNewIntent(Intent i) { super.onNewIntent(i); setIntent(i); handle(i); }
-  @Override protected void onStart() { super.onStart(); foreground = true; }
-  @Override protected void onStop() { super.onStop(); foreground = false; }
+  @Override public void onStart() { super.onStart(); foreground = true; }
+  @Override public void onStop() { super.onStop(); foreground = false; }
 
   @SuppressWarnings("deprecation")
   private void handle(Intent i) {

@@ -871,16 +871,37 @@ $('c-acc').onclick=acceptCall;
 $('c-mic').onclick=()=>{ const t=call?.local?.getAudioTracks()[0]; if(!t) return; t.enabled=!t.enabled; $('c-mic').classList.toggle('off',!t.enabled); };
 $('c-cam').onclick=()=>{ const t=call?.local?.getVideoTracks()[0]; if(!t) return; t.enabled=!t.enabled; $('c-cam').classList.toggle('off',!t.enabled); };
 
+const IS_NATIVE=!!(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform());
+const NPush=()=>window.Capacitor?.Plugins?.PushNotifications;
+let nTok=null;
+async function nativeRegister(){
+  const P=NPush(); if(!P) throw new Error('push-плагин не найден');
+  await P.removeAllListeners?.();
+  P.addListener('registration',async t=>{ nTok=t.value; try{ setPref('ntok',nTok); await client.from('device_tokens').upsert({user_id:me.id,token:nTok,platform:'android',updated_at:new Date().toISOString()},{onConflict:'token'}); }catch(e){} });
+  P.addListener('registrationError',e=>toast('Ошибка: '+(e.error||e.message||e)));
+  await P.register();
+}
+async function toggleNativePush(){
+  try{
+    const P=NPush(); if(!P){ pushAvail=false; return toast('Уведомления недоступны в этом браузере'); }
+    if(pushOn){ const t=pref('ntok',''); if(t) await client.from('device_tokens').delete().eq('token',t); setPref('npush','0'); pushOn=false; toast('Уведомления выключены'); return renderPageIf(); }
+    let r=await P.checkPermissions(); if(r.receive!=='granted') r=await P.requestPermissions();
+    if(r.receive!=='granted') return toast('Разрешение не выдано. Включи уведомления для сайта в настройках браузера.');
+    await nativeRegister(); setPref('npush','1'); pushOn=true; toast('Уведомления включены'); renderPageIf();
+  }catch(e){ toast('Ошибка: '+(e.message||e)); }
+}
 const pushSupported=()=>'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
 const isStandalone=window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
 function keyToBytes(b64){const p='='.repeat((4-b64.length%4)%4);const r=atob((b64+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from([...r].map(c=>c.charCodeAt(0)));}
 async function updatePushBtn(){
+  if(IS_NATIVE){ pushAvail=!!NPush(); pushOn=pushAvail&&pref('npush','0')==='1'; if(pushOn&&me) nativeRegister().catch(()=>{}); return renderPageIf(); }
   if(!pushSupported()){ pushAvail=false; pushOn=false; return renderPageIf(); }
   const reg=await navigator.serviceWorker.ready; const sub=await reg.pushManager.getSubscription();
   pushOn=!!sub; renderPageIf();
 }
 async function togglePush(){
+  if(IS_NATIVE) return toggleNativePush();
   try{
     if(isIOS&&!isStandalone) return toast('На iPhone сначала добавь сайт на экран «Домой»: Поделиться → На экран Домой. Потом открой его оттуда.');
     const reg=await navigator.serviceWorker.ready; const existing=await reg.pushManager.getSubscription();
@@ -895,7 +916,7 @@ async function togglePush(){
     toast('Уведомления включены'); updatePushBtn();
   }catch(e){ toast('Уведомления: '+(e.message||e)); }
 }
-const APP_VERSION='25';
+const APP_VERSION='26';
 async function runDiag(){
   const out=[]; const t=async(name,fn)=>{ try{ const r=await fn(); out.push((r&&r.error?'❌ ':'✅ ')+name+(r&&r.error?': '+r.error.message:'')); }catch(e){ out.push('❌ '+name+': '+(e.message||e)); } };
   await t('messages.reply_to_id',()=>client.from('messages').select('id,reply_to_id').limit(1));

@@ -1,0 +1,9 @@
+{
+  "appId": "app.kotak.messenger",
+  "appName": "KotakApp",
+  "webDir": "www",
+  "backgroundColor": "#050914",
+  "server": { "androidScheme": "https" },
+  "android": { "allowMixedContent": false, "webContentsDebuggingEnabled": false },
+  "plugins": { "PushNotifications": { "presentationOptions": ["badge", "sound", "alert"] } }
+}

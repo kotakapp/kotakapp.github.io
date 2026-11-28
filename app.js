@@ -69,7 +69,7 @@ async function loadSession() {
   $('auth-wrap').hidden=true; $('app').hidden=false;
   paintMe();
   $('me-name').textContent=me.display_name||me.username;
-  $('me-user').textContent='@'+me.username;
+  $('me-user').textContent='@'+me.username; $('bio-in').value=me.bio||'';
   await loadHidden();
   await loadChats();
   markDelivered();
@@ -142,7 +142,7 @@ async function loadChats() {
   if(error) throw error;
   const ids=(members||[]).map(x=>x.conversation_id);
   if(!ids.length) { chats=[]; renderChats(); return; }
-  const {data:allMembers,error:memberError}=await client.from('conversation_members').select('conversation_id,user_id,last_read_at,last_delivered_at,profiles(username,display_name,avatar_url)').in('conversation_id',ids);
+  const {data:allMembers,error:memberError}=await client.from('conversation_members').select('conversation_id,user_id,last_read_at,last_delivered_at,profiles(username,display_name,avatar_url,bio)').in('conversation_id',ids);
   if(memberError) throw memberError;
   const {data:lm,error:msgError}=await client.from('messages').select('id,conversation_id,sender_id,content,created_at,message_type,deleted_at').in('conversation_id',ids).order('created_at',{ascending:false});
   if(msgError) throw msgError;
@@ -540,6 +540,12 @@ $('av-change').onclick=()=>$('av-file').click();
 $('me-av').onclick=()=>$('av-file').click();
 $('av-file').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; setAvatar(f); };
 $('av-remove').onclick=removeAvatar;
+$('bio-save').onclick=async()=>{
+  const bio=$('bio-in').value.trim().slice(0,200);
+  const {error}=await client.from('profiles').update({bio:bio||null}).eq('id',me.id);
+  if(error) return toast('Описание: '+error.message);
+  me.bio=bio||null; $('bio-in').value=bio; toast('Описание сохранено');
+};
 
 /* ---- карточка контакта ---- */
 let cardTab='media';
@@ -555,7 +561,7 @@ function renderCard(){
   const people=(c.participants||[]).filter(x=>x.user_id!==me.id);
   $('card-info').innerHTML=g
     ? `<div class="irow"><small>Участники · ${(c.participants||[]).length}</small></div>`+(c.participants||[]).map(x=>{ const p=x.profiles||{}; const n=x.user_id===me.id?'Вы':(p.display_name||p.username||'Участник'); return `<div class="mrow">${avatar(n,false,p.avatar_url)}<div><div>${esc(n)}</div><small>@${esc(p.username||'')}</small></div></div>`; }).join('')
-    : `<div class="irow"><div>@${esc(c.otherUsername||people[0]?.profiles?.username||'')}</div><small>Имя пользователя</small></div>`;
+    : (people[0]?.profiles?.bio?`<div class="irow"><div class="bio">${esc(people[0].profiles.bio)}</div><small>О себе</small></div>`:'')+`<div class="irow"><div>@${esc(c.otherUsername||people[0]?.profiles?.username||'')}</div><small>Имя пользователя</small></div>`;
   document.querySelectorAll('#card-seg button').forEach(b=>b.classList.toggle('on',b.dataset.s===cardTab));
   renderCardBody();
 }
@@ -604,7 +610,7 @@ async function togglePush(){
   }catch(e){ toast('Уведомления: '+(e.message||e)); }
 }
 $('push-btn').onclick=togglePush;
-const APP_VERSION='13';
+const APP_VERSION='14';
 $('ver').textContent='Версия приложения: '+APP_VERSION;
 async function runDiag(){
   const out=[]; const t=async(name,fn)=>{ try{ const r=await fn(); out.push((r&&r.error?'❌ ':'✅ ')+name+(r&&r.error?': '+r.error.message:'')); }catch(e){ out.push('❌ '+name+': '+(e.message||e)); } };

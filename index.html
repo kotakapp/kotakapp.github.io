@@ -13,12 +13,12 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=23">
+<link rel="stylesheet" href="styles.css?v=25">
 </head>
 <body>
 <script>
 (function(){try{
-  var V='23',k='kotak_ver';
+  var V='25',k='kotak_ver';
   if(localStorage.getItem(k)!==V){
     localStorage.setItem(k,V);
     var jobs=[];
@@ -126,7 +126,7 @@
 <div class="sheet" id="sheet" hidden><div class="sheet-body"><div class="react-row" id="react-row"></div><button id="act-reply">Ответить</button><button id="act-edit">Изменить</button><button id="act-del-me">Удалить у меня</button><button id="act-del-all">Удалить у всех</button><button id="act-close" class="muted">Закрыть</button></div></div>
 <script>
 (function(){
-  var V='23', st={ok:{},err:[]};
+  var V='25', st={ok:{},err:[]};
   addEventListener('error',function(e){ st.err.push(e.message||'error'); });
   addEventListener('unhandledrejection',function(e){ st.err.push(String((e.reason&&e.reason.message)||e.reason)); });
   function load(src,ms){ return new Promise(function(res){
@@ -138,6 +138,7 @@
     var cdn=[['jsdelivr','https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'],['unpkg','https://unpkg.com/@supabase/supabase-js@2']];
     for(var i=0;i<cdn.length;i++){ if(window.supabase) break; st.ok[cdn[i][0]]=await load(cdn[i][1],8000); }
     st.ok.config=await load('config.js?v='+V,10000);
+    st.ok.i18n=await load('i18n.js?v='+V,10000);
     st.ok.app=await load('app.js?v='+V,10000);
   })();
   setTimeout(function(){

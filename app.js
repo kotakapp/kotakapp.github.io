@@ -11,8 +11,38 @@ let hiddenIds = new Set(), editing = null;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const initials = value => (String(value || '?').trim()[0] || '?').toUpperCase();
 const avCls = v => 'c'+([...String(v||'?')].reduce((a,c)=>a+c.charCodeAt(0),0)%6);
-const avatar = (name,dot=false,url='',own=false) => url?`<div class="avatar photo${own?' owner':''}" style="background-image:url('${esc(url)}')">${dot?'<span class="dot"></span>':''}</div>`:`<div class="avatar ${avCls(name)}${own?' owner':''}">${esc(initials(name))}${dot?'<span class="dot"></span>':''}</div>`;
+const avatar = (name,dot=false,url='',own=false,uid='') => url?`<div class="avatar photo${own?' owner':''}${stCls(uid)}"${stAttr(uid)} style="background-image:url('${esc(url)}')">${dot?'<span class="dot"></span>':''}</div>`:`<div class="avatar ${avCls(name)}${own?' owner':''}${stCls(uid)}"${stAttr(uid)}>${esc(initials(name))}${dot?'<span class="dot"></span>':''}</div>`;
 const setAv = (id,name,extra='',url='',own=false) => { const el=$(id); el.className=('avatar '+extra+(own?' owner ':' ')+' '+(url?'photo':avCls(name))).replace(/\s+/g,' ').trim(); el.style.backgroundImage=url?`url("${url}")`:''; el.textContent=url?'':initials(name); };
+
+/* ---- v24: чужие истории: кружок у аватарки и просмотр ---- */
+let storiesBy={}; const seenKey='kt_seen_stories';
+const seenSet=()=>{ try{ return new Set(JSON.parse(localStorage.getItem(seenKey)||'[]')); }catch(e){ return new Set(); } };
+function markSeen(id){ try{ const s=seenSet(); if(s.has(id)) return; s.add(id); localStorage.setItem(seenKey,JSON.stringify([...s].slice(-300))); }catch(e){} }
+function stCls(uid){ const l=uid&&storiesBy[uid]; if(!l?.length) return ''; const sn=seenSet(); return l.every(x=>sn.has(x.id))?' st-seen':' st-new'; }
+const stAttr = uid => (uid&&storiesBy[uid]?.length)?` data-su="${esc(uid)}"`:'';
+let lastStories=0;
+async function loadStoriesMap(){
+  if(!me||!client||Date.now()-lastStories<20000) return; lastStories=Date.now();
+  const {data,error}=await client.from('stories').select('id,user_id,kind,text,media_path,bg,created_at').gt('created_at',new Date(Date.now()-864e5).toISOString()).order('created_at',{ascending:true});
+  if(error){ storiesBy={}; return; }
+  const m={}; (data||[]).forEach(x=>{ (m[x.user_id]=m[x.user_id]||[]).push(x); });
+  const same=JSON.stringify(Object.keys(m).map(k=>[k,m[k].map(x=>x.id)]))===JSON.stringify(Object.keys(storiesBy).map(k=>[k,storiesBy[k].map(x=>x.id)]));
+  storiesBy=m; if(!same){ renderChats(); }
+}
+function storyNameOf(uid){
+  if(uid===me.id) return me.display_name||me.username;
+  const c=chats.find(x=>x.otherId===uid); if(c) return c.title;
+  for(const ch of chats){ const p=(ch.participants||[]).find(x=>x.user_id===uid)?.profiles; if(p) return p.display_name||p.username; }
+  return 'Пользователь';
+}
+document.addEventListener('click',e=>{
+  const a=e.target.closest?.('.avatar[data-su]'); if(!a||!me) return;
+  const uid=a.dataset.su, list=storiesBy[uid]; if(!list?.length) return;
+  e.preventDefault(); e.stopPropagation();
+  const sn=seenSet(); let i=list.findIndex(x=>!sn.has(x.id)); if(i<0) i=0;
+  openStory(list,i,{name:storyNameOf(uid),own:uid===me.id});
+},true);
+setInterval(()=>{ if(!document.hidden) loadStoriesMap().catch(()=>{}); },60000);
 
 /* ---- v20: значок создателя (owner) ---- */
 const isOwner = u => String(u||'').toLowerCase()==='owner';
@@ -29,7 +59,7 @@ function showOwnerInfo(){
 }
 document.addEventListener('click',e=>{ if(e.target.closest('.vbadge')){ e.preventDefault(); e.stopPropagation(); showOwnerInfo(); } },true);
 document.addEventListener('keydown',e=>{ if((e.key==='Enter'||e.key===' ')&&e.target.closest?.('.vbadge')){ e.preventDefault(); showOwnerInfo(); } if(e.key==='Escape') document.getElementById('own-sheet')?.remove(); });
-const time = value => new Date(value).toLocaleTimeString('ru', {hour:'2-digit', minute:'2-digit'});
+const time = value => new Date(value).toLocaleTimeString(LC, {hour:'2-digit', minute:'2-digit'});
 function toast(message) { const el=$('toast'); el.textContent=message; el.classList.add('show'); clearTimeout(window.toastTimer); window.toastTimer=setTimeout(()=>el.classList.remove('show'),7000); }
 window.addEventListener('unhandledrejection',e=>toast('Ошибка: '+(e.reason?.message||e.reason)));
 window.addEventListener('error',e=>toast('Ошибка: '+e.message));
@@ -82,6 +112,8 @@ async function loadSession() {
     profile=result.data;
   }
   me={...profile,id:user.id};
+  if(LANGS[profile.lang]&&profile.lang!==LANG){ setPref('lang',profile.lang); return location.reload(); }
+  if(!profile.lang&&LANG!=='ru') client.from('profiles').update({lang:LANG}).eq('id',user.id).then(()=>{},()=>{});
   $('auth-wrap').hidden=true; $('app').hidden=false;
   paintMe();
   await loadHidden();
@@ -173,7 +205,7 @@ async function loadChats() {
     const title=c.type==='group'?(c.title||'Группа'):(other?.display_name||other?.username||'Новый чат');
     return {id:c.id,type:c.type,title,otherId:participants.find(x=>x.user_id!==me.id)?.user_id,otherUsername:other?.username,otherAvatar:other?.avatar_url||'',participants,incoming:(lastMessages||[]).filter(m=>m.conversation_id===c.id&&m.sender_id!==me.id).map(m=>m.created_at),last:(lastMessages||[]).find(m=>m.conversation_id===c.id)||null};
   }).sort((a,b)=>new Date(b.last?.created_at||0)-new Date(a.last?.created_at||0));
-  renderChats();
+  renderChats(); loadStoriesMap().catch(()=>{});
 }
 function unreadOf(c){
   const mine=(c.participants||[]).find(x=>x.user_id===me.id); if(!mine?.last_read_at) return 0;
@@ -216,7 +248,7 @@ function renderChats() {
     const n=unreadOf(c), typing=isTyping(c), mineLast=!!c.last&&c.last.sender_id===me.id&&!c.last.deleted_at;
     const prev=typing?'печатает…':c.last?(c.last.deleted_at?'🚫 Сообщение удалено':c.last.message_type==='voice'?'🎤 Голосовое':c.last.message_type==='image'?'📷 Фото':c.last.message_type==='video'?'🎬 Видео':esc(c.last.content||'Вложение')):'Сообщений пока нет';
     const tk=mineLast?`<span class="tick ${tickFor(c,c.last.created_at)}">${tickSvg(tickFor(c,c.last.created_at))}</span>`:'';
-    return `<li><button class="item ${current?.id===c.id?'on':''}${c.type==='direct'&&isOwner(c.otherUsername)?' owner-item':''}" data-chat="${c.id}">${avatar(c.title,c.type==='direct'&&online.has(c.otherId),c.type==='direct'?c.otherAvatar:'',c.type==='direct'&&isOwner(c.otherUsername))}<div class="meta"><div class="row"><span class="name">${nameHtml(c.title,c.type==='direct'?c.otherUsername:'')}</span><span class="when ${n?'new':''}">${tk}${c.last?time(c.last.created_at):''}</span></div><div class="row2"><div class="last ${typing?'typing':''}">${prev}</div>${badge(c)}</div></div></button></li>`;
+    return `<li><button class="item ${current?.id===c.id?'on':''}${c.type==='direct'&&isOwner(c.otherUsername)?' owner-item':''}" data-chat="${c.id}">${avatar(c.title,c.type==='direct'&&online.has(c.otherId),c.type==='direct'?c.otherAvatar:'',c.type==='direct'&&isOwner(c.otherUsername),c.type==='direct'?c.otherId:'')}<div class="meta"><div class="row"><span class="name">${nameHtml(c.title,c.type==='direct'?c.otherUsername:'')}</span><span class="when ${n?'new':''}">${tk}${c.last?time(c.last.created_at):''}</span></div><div class="row2"><div class="last ${typing?'typing':''}">${prev}</div>${badge(c)}</div></div></button></li>`;
   }).join('')||`<li class="muted" style="padding:20px">${chatFilter==='unread'?'Непрочитанных чатов нет.':chatFilter!=='all'&&chats.length?'В этом разделе чатов нет.':'Чатов пока нет. Найди друзей во вкладке «Контакты».'}</li>`;
   $('cnt').textContent=chats.length; $('cnt').hidden=!chats.length;
   renderContacts();
@@ -226,11 +258,11 @@ const userQuery=()=>$('user-search').value.trim().replace(/^@/,'').toLowerCase()
 function renderContacts(){
   const q=userQuery(); let html;
   if(q.length>=2){
-    html='<li class="sec">Результаты поиска</li>'+((contactHits||[]).map(u=>`<li><button class="item${isOwner(u.username)?' owner-item':''}" data-user="${u.id}">${avatar(u.display_name||u.username,online.has(u.id),u.avatar_url,isOwner(u.username))}<div class="meta"><div class="name">${nameHtml(u.display_name||u.username,u.username)}</div><div class="last">@${esc(u.username)}</div></div><span class="go">Написать</span></button></li>`).join('')||'<li class="muted" style="padding:20px">Пользователи не найдены.</li>');
+    html='<li class="sec">Результаты поиска</li>'+((contactHits||[]).map(u=>`<li><button class="item${isOwner(u.username)?' owner-item':''}" data-user="${u.id}">${avatar(u.display_name||u.username,online.has(u.id),u.avatar_url,isOwner(u.username),u.id)}<div class="meta"><div class="name">${nameHtml(u.display_name||u.username,u.username)}</div><div class="last">@${esc(u.username)}</div></div><span class="go">Написать</span></button></li>`).join('')||'<li class="muted" style="padding:20px">Пользователи не найдены.</li>');
   } else {
     const seen=new Set();
     const cs=chats.filter(c=>c.type==='direct'&&c.otherId&&!seen.has(c.otherId)&&seen.add(c.otherId)&&(!q||(c.title+' '+(c.otherUsername||'')).toLowerCase().includes(q)));
-    html='<li class="sec">Контакты</li>'+(cs.map(c=>{ const on=online.has(c.otherId); return `<li><button class="item${isOwner(c.otherUsername)?' owner-item':''}" data-user="${c.otherId}">${avatar(c.title,on,c.otherAvatar,isOwner(c.otherUsername))}<div class="meta"><div class="name">${nameHtml(c.title,c.otherUsername)}</div><div class="st ${on?'on':''}"><i></i>${on?'В сети':'Не в сети'}</div></div></button></li>`; }).join('')||`<li class="muted" style="padding:20px">${q?'Среди контактов никого нет. Введи ещё символ, чтобы искать по всем пользователям.':'Контактов пока нет. Найди человека по @username и напиши ему.'}</li>`);
+    html='<li class="sec">Контакты</li>'+(cs.map(c=>{ const on=online.has(c.otherId); return `<li><button class="item${isOwner(c.otherUsername)?' owner-item':''}" data-user="${c.otherId}">${avatar(c.title,on,c.otherAvatar,isOwner(c.otherUsername),c.otherId)}<div class="meta"><div class="name">${nameHtml(c.title,c.otherUsername)}</div><div class="st ${on?'on':''}"><i></i>${on?'В сети':'Не в сети'}</div></div></button></li>`; }).join('')||`<li class="muted" style="padding:20px">${q?'Среди контактов никого нет. Введи ещё символ, чтобы искать по всем пользователям.':'Контактов пока нет. Найди человека по @username и напиши ему.'}</li>`);
   }
   $('contact-list').innerHTML=html;
 }
@@ -602,7 +634,7 @@ function renderCard(){
 }
 function renderCardBody(){
   const list=[...msgMap.values()].filter(m=>!m.deleted_at&&!hiddenIds.has(m.id)).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
-  const when=v=>new Date(v).toLocaleDateString('ru',{day:'numeric',month:'short'})+', '+time(v);
+  const when=v=>new Date(v).toLocaleDateString(LC,{day:'numeric',month:'short'})+', '+time(v);
   let html='';
   if(cardTab==='media'){
     const items=list.filter(m=>(m.message_type==='image'||m.message_type==='video')&&m.media_path&&!m.media_deleted_at);
@@ -863,7 +895,7 @@ async function togglePush(){
     toast('Уведомления включены'); updatePushBtn();
   }catch(e){ toast('Уведомления: '+(e.message||e)); }
 }
-const APP_VERSION='23';
+const APP_VERSION='25';
 async function runDiag(){
   const out=[]; const t=async(name,fn)=>{ try{ const r=await fn(); out.push((r&&r.error?'❌ ':'✅ ')+name+(r&&r.error?': '+r.error.message:'')); }catch(e){ out.push('❌ '+name+': '+(e.message||e)); } };
   await t('messages.reply_to_id',()=>client.from('messages').select('id,reply_to_id').limit(1));
@@ -935,7 +967,7 @@ const SETTINGS=[
   {id:'notif',t:'Уведомления',i:'bell',rows:[{t:'Новые сообщения',sw:1,act:'push'},{t:'Звук сообщений',sw:1,act:'snd'},{t:'Предпросмотр текста',sw:1,act:'prev'},{t:'Вибрация',sw:1,act:'vib'},{t:'Уведомления отдельных чатов',go:'mute'}]},
   {id:'chats',t:'Настройки чатов',i:'chat',rows:[{t:'Размер текста',seg:'fs'},{t:'Обои',go:'wp'},{t:'Тема',seg:'theme'},{t:'Автовоспроизведение видео',sw:1,act:'autoplay'},{t:'Автозагрузка медиа',sw:1,act:'autoload'},{t:'Отображение времени сообщений',sw:1,act:'time'}]},
   {id:'data',t:'Данные и память',i:'db',rows:[{t:'Мои файлы в чатах',go:'files'}]},
-  {id:'lang',t:'Язык',i:'globe',rows:[{t:'Русский',chk:1},{t:'Қазақша',soon:1},{t:'English',soon:1}]},
+  {id:'lang',t:'Язык',i:'globe',rows:[{t:'Русский',lg:'ru'},{t:'Қазақша',lg:'kk'},{t:'English',lg:'en'}]},
   {id:'about',t:'О приложении',i:'info',about:1,rows:[{t:'Поддержка',go:'support'},{t:'Политика конфиденциальности',go:'policy'}]},
   {id:'help',t:'Помощь',i:'help',rows:[{t:'Разработчик',go:'support'},{t:'FAQ',go:'faq'},{t:'Сообщить об ошибке',go:'fb-bug'},{t:'Предложить улучшение',go:'fb-idea'},{t:'Проверить базу данных',act:'diag',chev:1}]}
 ];
@@ -969,9 +1001,10 @@ function rowHtml(r){
   else if(r.act==='push'&&!pushAvail) right='<span class="val">Недоступно</span>';
   else if(r.sw) right=`<span class="sw ${swOn(r.act)?'on':''}"></span>`;
   else if(r.chk) right=CHECK;
+  else if(r.lg) right=LANG===r.lg?CHECK:'';
   else if(r.vf) right=`<span class="val">${r.vf()}</span>`+CHEV;
   else if(r.go||r.chev||r.url) right=CHEV;
-  return `<button type="button" class="srow ${r.soon?'soon':''} ${r.danger?'danger':''}" data-act="${r.act||''}" data-go="${r.go||''}" data-url="${r.url||''}" ${r.soon?'data-soon="1"':''}>${ic}<span class="tx">${r.t}</span>${right}</button>`;
+  return `<button type="button" class="srow ${r.soon?'soon':''} ${r.danger?'danger':''}" data-act="${r.lg?'lang:'+r.lg:(r.act||'')}" data-go="${r.go||''}" data-url="${r.url||''}" ${r.soon?'data-soon="1"':''}>${ic}<span class="tx">${r.t}</span>${right}</button>`;
 }
 function renderPage(){
   const s=SETTINGS.find(x=>x.id===curPage); if(!s) return; $('sp-title').textContent=s.t;
@@ -984,7 +1017,7 @@ function openSettings(id){
   curPage=id; $('sp-title').textContent=s.t; renderPage(); if($('spage').hidden) openPage($('spage'));
 }
 let isAdm=false, admUsers=[], adminLog=[], tickets=[], admCh=null, admSeen=false;
-function renderSettingsMain(){ $('settings-main').innerHTML='<div class="card2">'+SETTINGS.filter(s=>!s.hidden&&(!s.admin||isAdm)).map(s=>`<button type="button" class="srow" data-open="${s.id}"><span class="ic">${ico(s.i)}</span><span class="tx">${s.t}</span>${s.id==='lang'?'<span class="val">Русский</span>':''}${CHEV}</button>`).join('')+'</div>'; }
+function renderSettingsMain(){ $('settings-main').innerHTML='<div class="card2">'+SETTINGS.filter(s=>!s.hidden&&(!s.admin||isAdm)).map(s=>`<button type="button" class="srow" data-open="${s.id}"><span class="ic">${ico(s.i)}</span><span class="tx">${s.t}</span>${s.id==='lang'?`<span class="val">${LANGS[LANG]}</span>`:''}${CHEV}</button>`).join('')+'</div>'; }
 renderSettingsMain();
 $('settings-main').onclick=e=>{ const b=e.target.closest('[data-open]'); if(b) openSettings(b.dataset.open); };
 $('sp-body').onclick=async e=>{
@@ -1007,7 +1040,14 @@ $('sp-body').onclick=async e=>{
   if(a==='push'){ if(!pushAvail) return toast('Уведомления недоступны в этом браузере'); return togglePush(); }
   if(a in SWD){ setPref(a,pref(a,SWD[a])==='1'?'0':'1'); if(a==='vib'&&pref('vib','1')==='1') navigator.vibrate?.(60); if(a==='snd'&&pref('snd','1')==='1') beep(); applyPrefs(); return renderPage(); }
   if(a==='diag') return runDiag();
+  if(a&&a.startsWith('lang:')) return setLang(a.slice(5));
 };
+async function setLang(code){
+  if(!LANGS[code]||code===LANG) return;
+  setPref('lang',code);
+  try{ if(me) await client.from('profiles').update({lang:code}).eq('id',me.id); }catch(e){}
+  location.reload();
+}
 async function sendFeedback(btn){
   const text=($('fb-text').value||'').trim(); if(text.length<5) return toast('Напиши хотя бы пару слов');
   btn.disabled=true;
@@ -1022,7 +1062,7 @@ async function sendFeedback(btn){
 /* ---- v19: приватность, блокировки, поддержка, админ-панель owner ---- */
 const PVL={privacy_status:{all:'Все',nobody:'Никто'},privacy_write:{all:'Все',replied:'Только после моего сообщения'}};
 const sbUrl=p=>{ try{ return 'https://supabase.com/dashboard/project/'+new URL(cfg.SUPABASE_URL).hostname.split('.')[0]+p; }catch(e){ return 'https://supabase.com/dashboard'; } };
-const dt=v=>v?new Date(v).toLocaleString('ru',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+const dt=v=>v?new Date(v).toLocaleString(LC,{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
 const radioPage=(id,t,col,opts,note)=>({id,t,parent:'privacy',hidden:1,custom:()=>`<p class="tiny muted" style="padding:0 6px">${note}</p><div class="card2">`+opts.map(([k,n])=>`<button type="button" class="srow" data-pv="${col}" data-v="${k}"><span class="tx">${n}</span>${(me?.[col]||'all')===k?CHECK:''}</button>`).join('')+'</div>'});
 const uRow=(u,btn)=>`<div class="srow">${avatar(u.display_name||u.username,false,u.avatar_url)}<span class="tx">${esc(u.display_name||u.username)}<small class="muted">@${esc(u.username)}</small></span>${btn}</div>`;
 const msg0=t=>`<p class="muted" style="padding:18px">${t}</p>`;
@@ -1045,7 +1085,7 @@ SETTINGS.push(
    let err=''; try{ await loadAdmUsers(); }catch(e){ err=e.message||String(e); } const b=$('adm-box'); if(!b||curPage!=='adm-users') return;
    b.innerHTML=err?msg0('Ошибка: '+esc(err)+'. Выполнены ли SQL и добавлен ли owner в app_admins?'):`<div class="srow"><span class="tx">Всего аккаунтов</span><span class="val">${admUsers.length}</span></div>`+admUsers.map(u=>`<div class="srow"><span class="tx">${esc(u.display_name||u.username)} ${online.has(u.id)?'<i class="ond"></i>':''}<small class="muted">@${esc(u.username)} · рег. ${dt(u.created_at)} · вход ${dt(u.last_sign_in_at)}</small></span></div>`).join('');
  }},
- {id:'adm-live',t:'Онлайн и лог',parent:'admin',hidden:1,custom:()=>`<div class="card2"><div class="srow"><span class="tx">Сейчас онлайн</span><span class="val">${online.size}</span></div>`+[...online].map(id=>`<div class="srow"><span class="tx">${esc(nameById(id))}</span><i class="ond"></i></div>`).join('')+'</div><p class="tiny muted" style="padding:0 6px">Лог за текущий сеанс: входы и выходы, регистрации, обращения. Текст переписок не показывается.</p><div class="card2">'+(adminLog.map(l=>`<div class="srow"><span class="tx">${esc(l.text)}<small class="muted">${new Date(l.t).toLocaleTimeString('ru')}</small></span></div>`).join('')||msg0('Пока пусто.'))+'</div>'},
+ {id:'adm-live',t:'Онлайн и лог',parent:'admin',hidden:1,custom:()=>`<div class="card2"><div class="srow"><span class="tx">Сейчас онлайн</span><span class="val">${online.size}</span></div>`+[...online].map(id=>`<div class="srow"><span class="tx">${esc(nameById(id))}</span><i class="ond"></i></div>`).join('')+'</div><p class="tiny muted" style="padding:0 6px">Лог за текущий сеанс: входы и выходы, регистрации, обращения. Текст переписок не показывается.</p><div class="card2">'+(adminLog.map(l=>`<div class="srow"><span class="tx">${esc(l.text)}<small class="muted">${new Date(l.t).toLocaleTimeString(LC)}</small></span></div>`).join('')||msg0('Пока пусто.'))+'</div>'},
  {id:'adm-tickets',t:'Обращения',parent:'admin',hidden:1,custom:()=>'<div id="tk-box">'+ticketsHtml()+'</div>',after:async()=>{ try{ await loadTickets(); }catch(e){ const b=$('tk-box'); if(b) b.innerHTML='<div class="card2">'+msg0('Ошибка: '+esc(e.message||e))+'</div>'; return; } const b=$('tk-box'); if(b&&curPage==='adm-tickets') b.innerHTML=ticketsHtml(); }}
 );
 function ticketsHtml(){
@@ -1174,7 +1214,7 @@ async function storyUrl(path){
 }
 const stAge=x=>Date.now()-new Date(x.created_at).getTime();
 const stLeft=x=>{ const h=Math.max(1,Math.ceil((DAY-stAge(x))/36e5)); return 'ещё '+h+' ч'; };
-const stWhen=x=>new Date(x.created_at).toLocaleDateString('ru',{day:'numeric',month:'short'});
+const stWhen=x=>new Date(x.created_at).toLocaleDateString(LC,{day:'numeric',month:'short'});
 async function loadMyStories(){
   if(!me||!client) return;
   const {data,error}=await client.from('stories').select('*').eq('user_id',me.id).order('created_at',{ascending:false});
@@ -1188,7 +1228,7 @@ function renderStories(err){
   document.querySelector('.pempty').hidden=!!list.length&&!err;
   $('p-add').hidden=stTab==='arc'||!!err; $('p-add').textContent='+ Добавить историю';
   $('st-grid').innerHTML=list.map((x,i)=>`<button type="button" class="stt" data-i="${i}">${x.kind==='text'?`<div class="stx" style="background:${x.bg||stBgs[0]}">${esc((x.text||'').slice(0,80))}</div>`:`<div class="stm" data-path="${esc(x.media_path)}" data-k="${x.kind}"></div>${x.kind==='video'?'<i class="stp">▶</i>':''}`}<small>${stTab==='arc'?stWhen(x):stLeft(x)}</small></button>`).join('');
-  $('st-grid')._list=list;
+  $('st-grid')._list=list; $('me-av').classList.toggle('st-new',act.length>0);
   $('st-grid').querySelectorAll('.stm').forEach(async el=>{ try{ const u=await storyUrl(el.dataset.path); if(el.dataset.k==='video'){ el.innerHTML=`<video muted playsinline preload="metadata" src="${esc(u)}#t=0.1"></video>`; } else el.style.backgroundImage=`url("${u}")`; }catch(e){} });
 }
 $('ptabs').onclick=e=>{
@@ -1196,17 +1236,17 @@ $('ptabs').onclick=e=>{
   document.querySelectorAll('#ptabs button').forEach(x=>x.classList.toggle('on',x===b)); renderStories();
 };
 $('st-grid').onclick=e=>{ const b=e.target.closest('.stt'); if(!b) return; openStory($('st-grid')._list,+b.dataset.i); };
-function openStory(list,i){
-  if(!list?.length) return; stView={list,i};
+function openStory(list,i,opts){
+  if(!list?.length) return; stView={list,i,name:opts?.name||(me.display_name||me.username),own:opts?.own!==false};
   let ov=document.getElementById('sv'); if(!ov){ ov=document.createElement('div'); ov.id='sv'; ov.className='sv'; ov.onclick=svClick; document.body.appendChild(ov); }
   ov.hidden=false; renderStoryView();
 }
-function closeStory(){ const ov=document.getElementById('sv'); if(ov){ ov.querySelectorAll('video').forEach(v=>v.pause()); ov.hidden=true; ov.innerHTML=''; } stView=null; }
+function closeStory(){ const ov=document.getElementById('sv'); if(ov){ ov.querySelectorAll('video').forEach(v=>v.pause()); ov.hidden=true; ov.innerHTML=''; } stView=null; renderChats(); }
 function renderStoryView(){
-  const ov=document.getElementById('sv'); if(!ov||!stView) return; const {list,i}=stView, x=list[i];
+  const ov=document.getElementById('sv'); if(!ov||!stView) return; const {list,i}=stView, x=list[i]; markSeen(x.id);
   const prog=list.map((_,k)=>`<i class="${k<i?'d':k===i?'c':''}"></i>`).join('');
   const body=x.kind==='text'?`<div class="svt" style="background:${x.bg||stBgs[0]}"><p>${esc(x.text||'')}</p></div>`:`<div class="svm" id="sv-m"></div>${x.text?`<div class="svc">${esc(x.text)}</div>`:''}`;
-  ov.innerHTML=`<div class="svp">${prog}</div><div class="svh"><b>${esc(me.display_name||me.username)}</b><span>${stAge(x)<DAY?stLeft(x):stWhen(x)}</span><button type="button" data-sv="del" aria-label="Удалить">🗑</button><button type="button" data-sv="close" aria-label="Закрыть">✕</button></div>${body}`;
+  ov.innerHTML=`<div class="svp">${prog}</div><div class="svh"><b>${esc(stView.name)}</b><span>${stAge(x)<DAY?stLeft(x):stWhen(x)}</span>${stView.own?'<button type="button" data-sv="del" aria-label="Удалить">🗑</button>':''}<button type="button" data-sv="close" aria-label="Закрыть">✕</button></div>${body}`;
   if(x.kind!=='text') storyUrl(x.media_path).then(u=>{ const m=document.getElementById('sv-m'); if(!m||stView?.list[stView.i]!==x) return; m.innerHTML=x.kind==='video'?`<video src="${esc(u)}" controls autoplay playsinline></video>`:`<img src="${esc(u)}" alt="История">`; }).catch(()=>{ const m=document.getElementById('sv-m'); if(m) m.textContent='Файл недоступен'; });
 }
 function svClick(e){
@@ -1217,11 +1257,11 @@ function svClick(e){
   if(left){ if(stView.i>0){ stView.i--; renderStoryView(); } } else if(stView.i<stView.list.length-1){ stView.i++; renderStoryView(); } else closeStory();
 }
 async function deleteStory(){
-  const x=stView?.list[stView.i]; if(!x||!confirm('Удалить эту историю?')) return;
+  const x=stView?.list[stView.i]; if(!x||!stView.own||!confirm('Удалить эту историю?')) return;
   try{
     const {error}=await client.from('stories').delete().eq('id',x.id); if(error) throw error;
     if(x.media_path) client.storage.from('stories').remove([x.media_path]).catch(()=>{});
-    closeStory(); await loadMyStories(); toast('История удалена');
+    closeStory(); lastStories=0; await loadMyStories(); loadStoriesMap().catch(()=>{}); toast('История удалена');
   }catch(e){ toast('Не удалилось: '+(e.message||e)); }
 }
 async function cleanupStories(){
@@ -1255,7 +1295,7 @@ async function publishStory(btn){
     const {error}=await client.from('stories').insert(row); if(error) throw error;
     document.getElementById('stn')?.remove(); stTab='pub';
     document.querySelectorAll('#ptabs button').forEach(x=>x.classList.toggle('on',x.dataset.p==='pub'));
-    await loadMyStories(); toast('История опубликована');
+    lastStories=0; await loadMyStories(); loadStoriesMap().catch(()=>{}); toast('История опубликована');
   }catch(e){ if(path) client.storage.from('stories').remove([path]).catch(()=>{}); toast('Не опубликовано: '+(e.message||e)); btn.disabled=false; }
 }
 $('p-add').onclick=openStoryNew;

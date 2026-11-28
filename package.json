@@ -3,8 +3,8 @@
   "version": "26.0.0",
   "private": true,
   "scripts": {
-    "web": "node scripts/build-web.js",
-    "android:add": "npx cap add android && node scripts/patch-android.js && npx cap sync android"
+    "web": "node build-web.js",
+    "android:add": "npx cap add android && node patch-android.js && npx cap sync android"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",
